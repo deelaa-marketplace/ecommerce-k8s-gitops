@@ -1,0 +1,93 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+# This file is a replacement configuration for Kustomize.
+# It defines how to replace certain fields in Kubernetes resources
+# based on the values in a ConfigMap named "app-config".
+# The replacements are applied to resources that have the annotation
+# "kustomize.interpolated.resource=true".
+metadata:
+  name: app-replacement-component
+
+replacements:
+  - source:
+      kind: ConfigMap
+      name: app-config
+      fieldPath: data.APP_PORT
+    targets:
+      - select:
+          kind: Deployment
+          annotationSelector: "kustomize.interpolated.resource=true"
+        fieldPaths:
+          - spec.template.spec.containers.[name=\$APP_NAME].ports.[containerPort=\$APP_PORT].containerPort
+      - select:
+          Kind: Service
+          annotationSelector: "kustomize.interpolated.resource=true"
+        fieldPaths:
+          - spec.ports.*.targetPort
+  - source:
+      kind: ConfigMap
+      name: app-config
+      fieldPath: data.APP_NAME
+    targets:
+      - select:
+          kind: Deployment
+          annotationSelector: "kustomize.interpolated.resource=true"
+        fieldPaths:
+          - metadata.name  # ✅ Dynamically updates the name field
+          - spec.template.metadata.labels.app
+          - spec.template.spec.containers.[name=\$APP_NAME].envFrom.*.configMapRef.name
+          - spec.template.spec.containers.[name=\$APP_NAME].envFrom.*.secretRef.name
+          - spec.template.spec.containers.[name=\$APP_NAME].name
+        options:
+          create: false
+      - select:
+          kind: Service
+          annotationSelector: "kustomize.interpolated.resource=true"
+        fieldPaths:
+          - metadata.name
+          - spec.selector.app
+      - select:
+          kind: ConfigMap
+          annotationSelector: "kustomize.interpolated.resource=true"
+        fieldPaths:
+          - metadata.name
+        reject:
+          - Kind: ConfigMap
+            name: app-config
+      - select:
+          kind: Secret
+          annotationSelector: "kustomize.interpolated.resource=true"
+        fieldPaths:
+          - metadata.name
+
+  - source:
+      kind: ConfigMap
+      name: app-config
+      fieldPath: data.ENV
+    targets:
+      - select:
+          kind: ConfigMap
+          annotationSelector: "kustomize.interpolated.resource=true"
+        fieldPaths:
+          - metadata.labels.env
+          - data.ENV
+        options:
+          create: true
+        reject:
+          - Kind: ConfigMap
+            name: app-config
+      - select:
+          kind: Secret
+          annotationSelector: "kustomize.interpolated.resource=true"
+        fieldPaths:
+          - metadata.labels.env
+      - select:
+          kind: Service
+          annotationSelector: "kustomize.interpolated.resource=true"
+        fieldPaths:
+          - metadata.labels.env
+      - select:
+          kind: Deployment
+          annotationSelector: "kustomize.interpolated.resource=true"
+        fieldPaths:
+          - metadata.labels.env

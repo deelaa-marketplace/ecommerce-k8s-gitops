@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $APP_NAME
+spec:
+  template:
+    spec:
+      containers:
+        - name: $APP_NAME
+          resources:
+            requests:
+              cpu: "500m" # Requests 500 millicores (~0.5 vCPU)
+              memory: "512Mi" # Requests 512 MiB of RAM
+            limits:
+              cpu: "1" # Limits to 1 vCPU
+              memory: "1Gi" # Limits to 1 GiB of RAM
+
+

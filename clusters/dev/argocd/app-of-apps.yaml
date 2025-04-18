@@ -1,0 +1,49 @@
+#  ArgoCD ApplicationSet that deploys applications from a Git repository.
+# It uses the Git generator to create applications based on the directory structure in the repository.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: app-of-apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: 'https://github.com/deelaa-marketplace/ecommerce-k8s-gitops.git'
+        revision: HEAD
+        directories:
+          - path: 'clusters/*/apps/*'
+            values:
+              env: '{{index .path.segments 0}}'
+              appname: '{{.path.basename}}'
+              namespace: 'ecommerce-{{index .path.segments 0}}'
+          - path: 'clusters/argocd/*'
+            exclude: true
+
+  template:
+    metadata:
+      name: '{{.values.appname}}-{{.values.env}}'
+      labels:
+        app: '{{.values.appname}}'
+        env: '{{.values.env}}'
+        app.kubernetes.io/instance: '{{.values.appname}}'
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/part-of: '{{.values.appname}}'
+        app.kubernetes.io/version: v1.0.0
+        app.kubernetes.io/created-by: argocd
+    spec:
+      project: default
+      source:
+        repoURL: 'https://github.com/deelaa-marketplace/ecommerce-k8s-gitops.git'
+        targetRevision: 'HEAD'
+        path: '{{.path.path}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.values.namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

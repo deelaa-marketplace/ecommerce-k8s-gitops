@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+namespace: ecommerce-dev
+
+commonLabels:
+  env: dev
+
+commonAnnotations:
+  app.interpolated.resource: "true"
+  app.kubernetes.io/managed-by: kustomize
+
+patches:
+  - path: patch-manifest.yaml
+
+configMapGenerator:
+  - name: app-config
+    behavior: merge  # ✅ Ensures values are merged instead of conflicting
+    literals:
+      - APP_NAME=cart-service
+      - APP_NAMESPACE=ecommerce-dev
+      - ENV=dev
+
+transformers:
+  - ../../base2/replacement.yaml
