@@ -56,7 +56,7 @@ usage() {
 function get_preferred_ip() {
 
   # Get all IPs from hostname -I
-  local ips=("$(hostname -I)")
+  local ips="$(hostname -I)"
 
   # Define public IP pattern (modify if needed)
   local public_ip=""
