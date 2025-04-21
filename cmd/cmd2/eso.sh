@@ -7,12 +7,12 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Default variables
-DEFAULT_ESO_VERSION="0.9.5"
-DEFAULT_NAMESPACE="external-secrets"
+DEFAULT_ESO_VERSION="0.16.1"
+DEFAULT_NAMESPACE="default"
 DEFAULT_AWS_REGION="eu-west-1"
 DEFAULT_SECRET_STORE_NAME="aws-parameter-store"
 DEFAULT_SECRET_NAME="aws-parameters"
-DEFAULT_AWS_PARAMETER_PREFIX="/myapp"
+DEFAULT_AWS_PARAMETER_PREFIX="/app"
 
 # Variables that can be overridden
 ESO_VERSION=$DEFAULT_ESO_VERSION
@@ -143,6 +143,19 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# --- Dependency Management ---
+install_envsubst() {
+  if command -v apt-get &>/dev/null; then
+    sudo apt-get update && sudo apt-get install -y gettext-base
+  elif command -v yum &>/dev/null; then
+    sudo yum install -y gettext
+  else
+    echo "ERROR: Could not detect package manager (apt/yum)"
+    exit 1
+  fi
+}
+
+
 # Function to install dependencies
 install_dependencies() {
     echo -e "${YELLOW}Checking dependencies...${NC}"
@@ -151,6 +164,11 @@ install_dependencies() {
         echo -e "${RED}Error: kubectl is not installed${NC}"
         echo "Please install kubectl and ensure it's configured to access your cluster"
         exit 1
+    fi
+
+    if ! command -v envsubst &>/dev/null; then
+        echo "Installing envsubst..."
+        install_envsubst || { echo "envsubst installation failed"; missing=1; }
     fi
     
     if ! command_exists helm; then
@@ -262,7 +280,7 @@ metadata:
   name: $SECRET_NAME
   namespace: $NAMESPACE
 spec:
-  refreshInterval: 1h
+  refreshInterval: 2h
   secretStoreRef:
     name: $SECRET_STORE_NAME
     kind: SecretStore
@@ -363,3 +381,13 @@ main() {
 
 # Execute main function
 main "$@"
+
+# ./script.sh --install \
+#     --eso-version=0.9.5 \
+#     --namespace=external-secrets \
+#     --region=us-west-2 \
+#     --store-name=my-aws-store \
+#     --secret-name=app-secrets \
+#     --prefix=/production/myapp \
+#     --access-key=AKIAXXXXXXXXXXXXXXXX \
+#     --secret-key=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX

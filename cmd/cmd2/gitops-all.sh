@@ -12,7 +12,7 @@ DEFAULT_OPERATION="help"
 DEFAULT_VERBOSE=false
 
 # K3s configuration
-DEFAULT_K3S_VERSION="v1.28.5+k3s1"
+DEFAULT_K3S_VERSION="v1.32.3+k3s1"
 DEFAULT_K3S_NODE_IP=$(hostname -I | awk '{print $1}')
 DEFAULT_K3S_CLUSTER_NAME="my-k3s-cluster"
 

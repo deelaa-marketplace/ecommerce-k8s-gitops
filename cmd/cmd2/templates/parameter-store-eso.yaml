@@ -1,0 +1,39 @@
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: "${NAME_PREFIX}-aws-parameter-store"
+  namespace: "${NAMESPACE}"
+spec:
+  provider:
+    aws:
+      service: ParameterStore
+      region: "${AWS_REGION}"
+      auth:
+        secretRef:
+          accessKeyIDSecretRef:
+            name: "${NAME_PREFIX}-aws-credentials"
+            key: "aws-access-key"
+          secretAccessKeySecretRef:
+            name: "${NAME_PREFIX}-aws-credentials"
+            key: "aws-secret-key"
+
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: "${NAME_PREFIX}-app-secrets"
+  namespace: "${NAMESPACE}"
+spec:
+  refreshInterval: "${REFRESH_INTERVAL:-6h}"
+  secretStoreRef:
+    name: "${NAME_PREFIX}-aws-parameter-store"
+    kind: "SecretStore"
+  target:
+    name: "${NAME_PREFIX}-app-secrets"
+  data:
+    - secretKey: "DB_PASSWORD"
+      remoteRef:
+        key: "/${NAME_PREFIX}/db/password"
+    - secretKey: "API_KEY"
+      remoteRef:
+        key: "/${NAME_PREFIX}/api/key"

@@ -7,20 +7,29 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Default variables with parameterized values
-DEFAULT_K3S_VERSION="v1.28.5+k3s1"
-DEFAULT_ARGOCD_VERSION="v2.9.3"
-DEFAULT_ARGOCD_PORT="8080"
+DEFAULT_K3S_VERSION="v1.32.3+k3s1"
+DEFAULT_ARGOCD_VERSION="v2.14.10"
+DEFAULT_ARGOCD_PORT="80"
 DEFAULT_ARGOCD_NAMESPACE="argocd"
-DEFAULT_CLUSTER_NAME="my-k3s-cluster"
-DEFAULT_NODE_IP=$(hostname -I | awk '{print $1}')
+DEFAULT_CLUSTER_NAME="development"
+DEFAULT_ESO_VERSION="0.16.1"
+DEFAULT_ESO_NAME="external-secrets"
+DEFAULT_ESO_NAMESPACE="external-secrets"
 
 # Variables that can be overridden by command line options
 K3S_VERSION=$DEFAULT_K3S_VERSION
+CLUSTER_NAME=$DEFAULT_CLUSTER_NAME
+NODE_IP=""
+# ArgoCD variables
 ARGOCD_VERSION=$DEFAULT_ARGOCD_VERSION
 ARGOCD_PORT=$DEFAULT_ARGOCD_PORT
 ARGOCD_NAMESPACE=$DEFAULT_ARGOCD_NAMESPACE
-CLUSTER_NAME=$DEFAULT_CLUSTER_NAME
-NODE_IP=$DEFAULT_NODE_IP
+SKIP_ARGOCD="false"
+# ESO variables
+ESO_VERSION=$DEFAULT_ESO_VERSION
+ESO_NAME=$DEFAULT_ESO_NAME
+ESO_NAMESPACE=$DEFAULT_ESO_NAMESPACE
+SKIP_ESO="false"
 
 # Function to print usage information
 usage() {
@@ -29,64 +38,140 @@ usage() {
     echo "  --install               Install K3s cluster and ArgoCD"
     echo "  --uninstall             Uninstall K3s cluster and ArgoCD"
     echo "  --k3s-version=VERSION   K3s version (default: $DEFAULT_K3S_VERSION)"
-    echo "  --argocd-version=VER    ArgoCD version (default: $DEFAULT_ARGOCD_VERSION)"
-    echo "  --argocd-port=PORT      Port for ArgoCD dashboard (default: $DEFAULT_ARGOCD_PORT)"
-    echo "  --argocd-ns=NAMESPACE   Namespace for ArgoCD (default: $DEFAULT_ARGOCD_NAMESPACE)"
     echo "  --cluster-name=NAME     Cluster name (default: $DEFAULT_CLUSTER_NAME)"
     echo "  --node-ip=IP            Node IP address (default: auto-detected)"
+    echo "  --argocd-version=VER    ArgoCD version (default: $DEFAULT_ARGOCD_VERSION)"
+    echo "  --argocd-port=PORT      Port for ArgoCD dashboard (default: $DEFAULT_ARGOCD_PORT for LoadBalance or NodePort range is 30000-32767)"
+    echo "  --argocd-ns=NAMESPACE   Namespace for ArgoCD (default: $DEFAULT_ARGOCD_NAMESPACE)"
+    echo "  --skip-argocd           Skip ArgoCD installation (default: $SKIP_ARGOCD)"
+    echo "  --eso-version=VERSION   External Secrets Operator version (default: $DEFAULT_ESO_VERSION)"
+    echo "  --eso-name=NAME         Name for External Secrets Operator (default: $DEFAULT_ESO_NAME)"
+    echo "  --eso-ns=NAMESPACE      Namespace for External Secrets Operator (default: $DEFAULT_ESO_NAMESPACE)"
+    echo "  --skip-eso              Skip External Secrets Operator installation (default: $SKIP_ESO)"
     echo "  -h, --help              Show this help message"
     exit 1
+}
+
+function get_preferred_ip() {
+    # Get all IPs, split into array
+    local all_ips=($(hostname -I))
+    local public_ip=""
+    local fallback_ip="${all_ips[0]}" # First IP as default fallback
+
+    # Common private network prefixes to exclude
+    local private_prefixes=(
+        "10." "192.168." "172.16." "172.17." "172.18." "172.19."
+        "172.20." "172.21." "172.22." "172.23." "172.24." "172.25."
+        "172.26." "172.27." "172.28." "172.29." "172.30." "172.31."
+        "169.254."
+    )
+
+    # Check each IP
+    for ip in "${all_ips[@]}"; do
+        local is_private=false
+
+        # Check against private ranges
+        for prefix in "${private_prefixes[@]}"; do
+            if [[ "$ip" == "$prefix"* ]]; then
+                is_private=true
+                break
+            fi
+        done
+
+        # First non-private IP is considered public
+        if [ "$is_private" = false ]; then
+            public_ip="$ip"
+            break
+        fi
+    done
+
+    # Return public IP if found, otherwise fallback
+    if [ -n "$public_ip" ]; then
+        echo "$public_ip"
+    else
+        echo "$fallback_ip"
+    fi
 }
 
 # Function to parse command line arguments
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --install)
-                OPERATION="install"
-                shift
-                ;;
-            --uninstall)
-                OPERATION="uninstall"
-                shift
-                ;;
-            --k3s-version=*)
-                K3S_VERSION="${1#*=}"
-                shift
-                ;;
-            --argocd-version=*)
-                ARGOCD_VERSION="${1#*=}"
-                shift
-                ;;
-            --argocd-port=*)
-                ARGOCD_PORT="${1#*=}"
-                shift
-                ;;
-            --argocd-ns=*)
-                ARGOCD_NAMESPACE="${1#*=}"
-                shift
-                ;;
-            --cluster-name=*)
-                CLUSTER_NAME="${1#*=}"
-                shift
-                ;;
-            --node-ip=*)
-                NODE_IP="${1#*=}"
-                shift
-                ;;
-            -h|--help)
-                usage
-                ;;
-            *)
-                echo -e "${RED}Unknown option: $1${NC}"
-                usage
-                ;;
+        --install)
+            OPERATION="install"
+            shift
+            ;;
+        --uninstall)
+            OPERATION="uninstall"
+            shift
+            ;;
+        --k3s-version=*)
+            K3S_VERSION="${1#*=}"
+            shift
+            ;;
+        --cluster-name=*)
+            CLUSTER_NAME="${1#*=}"
+            shift
+            ;;
+        --node-ip=*)
+            NODE_IP="${1#*=}"
+            shift
+            ;;
+        --argocd-version=*)
+            ARGOCD_VERSION="${1#*=}"
+            shift
+            ;;
+        --argocd-port=*)
+            ARGOCD_PORT="${1#*=}"
+            shift
+            ;;
+        --argocd-ns=*)
+            ARGOCD_NAMESPACE="${1#*=}"
+            shift
+            ;;
+        --skip-argocd)
+            SKIP_ARGOCD="true"
+            shift
+            ;;
+        --eso-version=*)
+            ESO_VERSION="${1#*=}"
+            shift
+            ;;
+        --eso-name=*)
+            ESO_NAME="${1#*=}"
+            shift
+            ;;
+        --eso-ns=*)
+            ESO_NAMESPACE="${1#*=}"
+            shift
+            ;;
+        --skip-eso)
+            SKIP_ESO="true"
+            shift
+            ;;
+
+        -h | --help)
+            usage
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            usage
+            ;;
         esac
     done
 
     if [ -z "$OPERATION" ]; then
         echo -e "${RED}Error: Either --install or --uninstall must be specified${NC}"
         usage
+    fi
+
+    if [[ ! "$ARGOCD_PORT" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}Error: ArgoCD port must be a number${NC}"
+        usage
+    fi
+    if [ -z "$NODE_IP" ]; then
+        NODE_IP=$(get_preferred_ip)
+        echo -e "${YELLOW}Node IP not specified. Using auto-detected IP: $NODE_IP${NC}"
     fi
 }
 
@@ -114,6 +199,52 @@ confirm() {
     fi
 }
 
+# Generic function to detect a Kubernetes operator in a specific namespace
+# Usage: is_operator_installed <namespace> <operator_name> <deployment_label> [<crd_name>]
+function is_operator_installed() {
+    local namespace="$1"
+    local operator_name="$2"
+    local deployment_label="$3"
+    local crd_name="$4"
+
+    echo -n "Checking for ${operator_name} in namespace '$namespace'... "
+
+    # Check if namespace exists
+    if ! kubectl get ns "${namespace}" &>/dev/null; then
+        echo -e "${YELLOW} Namespace '${namespace}' does not exist..${NC}"
+        #kubectl create namespace $namespace
+        return 1
+    fi
+
+    # Check for deployment with the specified label
+    if ! kubectl get deployments -n "${namespace}" -l "$deployment_label" &>/dev/null; then
+        echo -e "❌ ${RED}${operator_name} deployment not found (label: ${deployment_label}) in namespace '${namespace}'${NC}"
+        return 1
+    fi
+
+    # Optionally check for CRD
+    if [ -n "$crd_name" ]; then
+        if ! kubectl get crd "${crd_name}" &>/dev/null; then
+            echo -e "❌ ${RED}${operator_name} CRD not found${NC}"
+            return 1
+        fi
+    fi
+
+    echo -e "✅ ${operator_name} is already installed and running${NC}"
+    return 0
+}
+
+is_crd_installed() {
+    local crd_name="$1"
+    if kubectl get crd "$crd_name" &>/dev/null; then
+        echo -e "✅ ${GREEN}${crd_name} CRD is already installed${NC}"
+        return 0
+    else
+        echo -e "${YELLOW}${crd_name} CRD not found${NC}"
+        return 1
+    fi
+}
+
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -133,43 +264,103 @@ install_k3s() {
         --cluster-domain $CLUSTER_NAME.local \
         --write-kubeconfig-mode 644 \
         --disable traefik
-    
+
     # Wait for K3s to be ready
     echo -e "${YELLOW}Waiting for K3s to be ready...${NC}"
-    until kubectl get nodes &> /dev/null; do
+    until kubectl get nodes &>/dev/null; do
         sleep 2
     done
-    
+
     # Set up kubectl configuration
     mkdir -p $HOME/.kube
     sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
     sudo chown $(id -u):$(id -g) $HOME/.kube/config
     sed -i "s/127.0.0.1/$NODE_IP/g" $HOME/.kube/config
-    
+
     echo -e "${GREEN}K3s installed successfully${NC}"
 }
 
 # Function to install ArgoCD
 install_argocd() {
-    if kubectl get namespace $ARGOCD_NAMESPACE &> /dev/null; then
-        echo -e "${GREEN}ArgoCD is already installed in namespace $ARGOCD_NAMESPACE${NC}"
+    if [ "$SKIP_ARGOCD" == "true" ]; then
+        echo -e "${YELLOW}Skipping ArgoCD installation...${NC}"
+        return
+    fi
+    # Check if the operator is already installed
+    is_operator_installed $ARGOCD_NAMESPACE "ArgoCD" "app.kubernetes.io/name=argocd-server" || return
+
+    # Check if ArgoCD CRD is already installed
+    if is_crd_installed "applications.argoproj.io"; then
+        echo -e "${GREEN}ArgoCD is already installed. Only one instance is allowed per cluster${NC}"
         return
     fi
 
+    local argocd_type="LoadBalancer"
+    if [[ "$ARGOCD_PORT" -ge 30000 && "$ARGOCD_PORT" -le 32767 ]]; then
+        echo -e "${GREEN}ArgoCD port is valid and within range for NodePort!. Defaulting to NodePort${NC}"
+        argocd_type="NodePort"
+    fi
+
     echo -e "${YELLOW}Installing ArgoCD...${NC}"
-    kubectl create namespace $ARGOCD_NAMESPACE
-    kubectl apply -n $ARGOCD_NAMESPACE -f https://raw.githubusercontent.com/argoproj/argo-cd/$ARGOCD_VERSION/manifests/install.yaml
-    
+    # Install ArgoCD using kubectl
+    #kubectl create namespace $ARGOCD_NAMESPACE
+    #kubectl create namespace $ARGOCD_NAMESPACE # Namespace creation is commented out
+    #kubectl apply -n $ARGOCD_NAMESPACE -f https://raw.githubusercontent.com/argoproj/argo-cd/$ARGOCD_VERSION/manifests/install.yaml
+
+    helm repo add argo https://argoproj.github.io/argo-helm
+    helm repo update
+    # Install ArgoCD using Helm
+    echo -e "${YELLOW}Installing ArgoCD with Type: ${argocd_type}...${NC}"
+
+    helm install argocd argo/argo-cd \
+        --namespace $ARGOCD_NAMESPACE \
+        --version $ARGOCD_VERSION \
+        --create-namespace \
+        --set server.service.type=$argocd_type
+
+    if [ "$argocd_type" == "NodePort" ]; then
+        helm upgrade --install argocd argo/argo-cd \
+            --namespace $ARGOCD_NAMESPACE \
+            --set server.service.nodePort=$ARGOCD_PORT
+    fi
+
+    if [ "$argocd_type" == "LoadBalancer" ]; then
+        helm upgrade --install argocd argo/argo-cd \
+            --namespace $ARGOCD_NAMESPACE \
+            --set server.service.port=$ARGOCD_PORT
+    fi
+
+    # --set server.service.type=LoadBalancer \
+    # --set server.service.nodePort=$ARGOCD_PORT
+    # --set server.service.port=$ARGOCD_PORT
+    # --set server.service.targetPort=8080
+    # --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"=nlb \
+    # --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-internal"=true \
+    # --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-backend-protocol"=tcp \
+    # --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-ssl-cert"=$SSL_CERT_ARN \
+    # --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-ssl-ports"=443 \
+
     # Wait for ArgoCD to be ready
     echo -e "${YELLOW}Waiting for ArgoCD to be ready...${NC}"
     kubectl wait --for=condition=available deployment/argocd-server -n $ARGOCD_NAMESPACE --timeout=300s
-    
-    # Patch service to use NodePort
-    kubectl patch svc argocd-server -n $ARGOCD_NAMESPACE -p '{"spec": {"type": "NodePort", "ports": [{"nodePort": '"$ARGOCD_PORT"', "port": 80, "protocol": "TCP", "targetPort": 8080}]}}'
-    
+
+    # Patch service to use NodePort - 30000-32767
+
+    #kubectl patch svc argocd-server -n $ARGOCD_NAMESPACE -p '{"spec": {"type": "NodePort", "ports": [{"nodePort": '"$ARGOCD_PORT"', "port": 80, "protocol": "TCP", "targetPort": 8080}]}}'
+
+    #kubectl patch svc argocd-server -n $ARGOCD_NAMESPACE -p '{"spec": {"type": "LoadBalancer", "ports": [{"port": 80, "protocol": "TCP", "targetPort": 8080}]}}'
+
+    # if [[ "$ARGOCD_PORT" =~ ^[0-9]+$ ]] && (("$ARGOCD_PORT" >= 30000 && "$ARGOCD_PORT" <= 32767)); then
+    #     echo "✅  $ARGOCD_PORT is a number and within range for type NodePort!"
+    #     kubectl patch svc argocd-server -n $ARGOCD_NAMESPACE -p '{"spec": {"type": "NodePort", "ports": [{"nodePort": '"$ARGOCD_PORT"', "port": 80, "protocol": "TCP", "targetPort": 8080}]}}'
+    # else
+    #     echo "✅  $ARGOCD_PORT is on type LoadBalancer!"
+    #     kubectl patch svc argocd-server -n $ARGOCD_NAMESPACE -p '{"spec": {"type": "LoadBalancer", "ports": [{"port": '"$ARGOCD_PORT"', "protocol": "TCP", "targetPort": 8080}]}}'
+    # fi
+
     # Get initial admin password
     ARGOCD_PASSWORD=$(kubectl -n $ARGOCD_NAMESPACE get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-    
+
     echo -e "${GREEN}ArgoCD installed successfully${NC}"
     echo -e "${YELLOW}ArgoCD Dashboard URL: http://$NODE_IP:$ARGOCD_PORT${NC}"
     echo -e "${YELLOW}Username: admin${NC}"
@@ -190,58 +381,153 @@ install_argocd_cli() {
     echo -e "${GREEN}ArgoCD CLI installed successfully${NC}"
 }
 
+# Function to install External Secrets Operator
+install_eso() {
+    if [ ${SKIP_ESO} == "true" ]; then
+        echo -e "${YELLOW}Skipping External Secrets Operator installation...${NC}"
+        return
+    fi
+
+    # Check if the operator is already installed
+    is_operator_installed $ESO_NAMESPACE "ESO" "app.kubernetes.io/name=${ESO_NAME}" || return
+    # Check if CRD is already installed
+    # local installCRD = is_crd_installed "externalsecrets.external-secrets.io" && false || true
+    if is_crd_installed "externalsecrets.external-secrets.io"; then
+        echo -e "${GREEN}External Secrets Operator CRD is already installed. Only one instance is allowed per cluster ${NC}"
+        return
+    fi
+
+    echo -e "${YELLOW}Installing External Secrets Operator...${NC}"
+
+    # Add the External Secrets Helm repository
+    helm repo add external-secrets https://charts.external-secrets.io
+    helm repo update
+
+    # Install the operator
+    helm install $ESO_NAME \
+        external-secrets/external-secrets \
+        -n $ESO_NAMESPACE \
+        --create-namespace \
+        --version $ESO_VERSION \
+        --set installCRDs=true
+
+    # Wait for the operator to be ready
+    echo -e "${YELLOW}Waiting for External Secrets Operator to be ready...${NC}"
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=$ESO_NAME -n $ESO_NAMESPACE --timeout=300s
+
+    echo -e "${GREEN}External Secrets Operator installed successfully${NC}"
+}
+
 # Function to uninstall K3s and ArgoCD
 uninstall_all() {
     echo -e "${YELLOW}Starting uninstallation process...${NC}"
-    
+
     # Delete ArgoCD namespace and resources
-    if kubectl get namespace $ARGOCD_NAMESPACE &> /dev/null; then
+    if kubectl get namespace $ARGOCD_NAMESPACE &>/dev/null; then
         echo -e "${YELLOW}Deleting ArgoCD resources...${NC}"
         kubectl delete namespace $ARGOCD_NAMESPACE
     fi
-    
+
     # Uninstall K3s
     if command_exists k3s; then
         echo -e "${YELLOW}Uninstalling K3s...${NC}"
         /usr/local/bin/k3s-uninstall.sh
     fi
-    
+
     # Remove ArgoCD CLI
     if command_exists argocd; then
         echo -e "${YELLOW}Removing ArgoCD CLI...${NC}"
         sudo rm -f /usr/local/bin/argocd
     fi
-    
-    # Remove configuration files
-    echo -e "${YELLOW}Cleaning up configuration files...${NC}"
-    rm -rf $HOME/.kube
-    rm -rf $HOME/.cache/argocd
-    
-    echo -e "${GREEN}Uninstallation completed successfully${NC}"
+
+    # Uninstall External Secrets Operator
+    if [ "$SKIP_ESO" == "false" ]; then
+        echo -e "${YELLOW}Uninstalling External Secrets Operator...${NC}"
+        if kubectl get namespace $ESO_NAMESPACE &>/dev/null; then
+            helm uninstall $ESO_NAME -n $ESO_NAMESPACE
+        else
+            echo -e "${YELLOW}Namespace $ESO_NAMESPACE does not exist. Skipping External Secrets Operator uninstallation.${NC}"
+        fi
+        # Function to install necessary dependencies
+        # This function checks for required tools like Helm and installs them if they are not already present.
+        install_dependencies() {
+            echo -e "${YELLOW}Checking dependencies...${NC}"
+
+            # Check if Helm is required and not installed, then install it
+            # Helm is needed if ArgoCD or External Secrets Operator installation is not skipped
+            if ([ "$SKIP_ARGOCD" == "false" ] || [ "$SKIP_ESO" == "false" ]) && ! command_exists helm; then
+                echo -e "${YELLOW}Installing Helm...${NC}"
+                curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+                echo -e "${GREEN}Helm installed successfully${NC}"
+            else
+                # If Helm is already installed, notify the user
+                echo -e "${GREEN}Helm is already installed${NC}"
+            fi
+        }
+        echo -e "${GREEN}Helm is already installed${NC}"
+    fi
+
+}
+
+# Function to verify installation
+verify_installation() {
+    echo -e "${YELLOW}Verifying installation...${NC}"
+
+    # Check if K3s is running
+    if ! command_exists k3s; then
+        echo -e "${RED}K3s is not installed${NC}"
+        return 1
+    fi
+
+    # Check if kubectl is configured
+    if ! kubectl cluster-info &>/dev/null; then
+        echo -e "${RED}kubectl is not configured correctly${NC}"
+        return 1
+    fi
+
+    # Check if ArgoCD CRD is installed
+    if ! kubectl get crd applications.argoproj.io &>/dev/null; then
+        echo -e "${RED}ArgoCD CRD is not installed${NC}"
+        return 1
+    fi
+
+    # Check if External Secrets Operator is running
+    # Check if ESO CRD is installed
+    if ! kubectl get crd externalsecrets.external-secrets.io &>/dev/null; then
+        echo -e "${RED}External Secrets Operator CRD is not installed${NC}"
+        return 1
+    fi
+    # output values
+    echo -e "${YELLOW}ArgoCD Dashboard URL: http://$NODE_IP:$ARGOCD_PORT${NC}"
+
+    echo -e "${GREEN}All components are installed and running successfully${NC}"
 }
 
 # Main function
 main() {
     parse_args "$@"
+    install_dependencies
     confirm
-    
+
     case "$OPERATION" in
-        install)
-            install_k3s
-            install_argocd
-            install_argocd_cli
-            ;;
-        uninstall)
-            uninstall_all
-            ;;
-        *)
-            echo -e "${RED}Invalid operation${NC}"
-            exit 1
-            ;;
+    install)
+        install_k3s
+        install_argocd
+        install_argocd_cli
+        install_eso
+        verify_installation
+        ;;
+    uninstall)
+        uninstall_all
+        ;;
+    *)
+        echo -e "${RED}Invalid operation${NC}"
+        exit 1
+        ;;
     esac
-    
-    echo -e "${GREEN}Operation completed successfully${NC}"
 }
 
-# Execute main function
-main "$@"
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
