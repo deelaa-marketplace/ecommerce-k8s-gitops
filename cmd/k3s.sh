@@ -276,7 +276,6 @@ install_argocd() {
 
   if [[ $is_upgrade -eq 0 ]]; then
     echo -e "${GREEN}Detected an existing ArgoCD in cluster namespace. Will try upgrade${NC}"
-    is_upgrade=1
   fi
   # Check if ArgoCD CRD is already installed in another cluster
   if [[ $is_upgrade -ne 0 ]] && is_crd_installed "applications.argoproj.io"; then
@@ -364,7 +363,6 @@ install_eso() {
 
   if [[ "$is_upgrade" -eq 0 ]]; then
     echo -e "${GREEN}Detected an existing ESO in cluster namespace. Will try an upgrade${NC}"
-    is_upgrade=1
   fi
 
   # Check if CRD is already installed
@@ -381,7 +379,7 @@ install_eso() {
   helm repo update
 
   local operation="install"
-  if $is_upgrade; then
+  if [[ "$is_upgrade" -eq 0 ]]; then
     operation="upgrade"
   fi
 
