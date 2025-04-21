@@ -54,45 +54,25 @@ usage() {
 }
 
 function get_preferred_ip() {
-  # Get all IPs, split into array
-  local all_ips=("$(hostname -I)")
+
+  # Get all IPs from hostname -I
+  local ips=("$(hostname -I)")
+
+  # Define public IP pattern (modify if needed)
   local public_ip=""
-  local fallback_ip="${all_ips[0]}" # First IP as default fallback
-  echo ${#fallback_ip}
 
-  # Common private network prefixes to exclude
-  local private_prefixes=(
-    "10." "192.168." "172.16." "172.17." "172.18." "172.19."
-    "172.20." "172.21." "172.22." "172.23." "172.24." "172.25."
-    "172.26." "172.27." "172.28." "172.29." "172.30." "172.31."
-    "169.254."
-  )
-
-  # Check each IP
-  for ip in "${all_ips[@]}"; do
-    local is_private=false
-
-    # Check against private ranges
-    for prefix in "${private_prefixes[@]}"; do
-      if [[ "$ip" == "$prefix"* ]]; then
-        is_private=true
-        break
+  for ip in "${ips[@]}"; do
+      # Check if IP is a public address (non-private range)
+      if [[ ! "$ip" =~ ^(10\.|192\.168\.|172\.16\.) ]]; then
+          public_ip="$ip"
+          break
       fi
-    done
-
-    # First non-private IP is considered public
-    if [ "$is_private" = false ]; then
-      public_ip="$ip"
-      break
-    fi
   done
 
-  # Return public IP if found, otherwise fallback
-  if [ -n "$public_ip" ]; then
-    echo "$public_ip"
-  else
-    echo "$fallback_ip"
-  fi
+  # Default to the first IP if no public IP was found
+  public_ip="${public_ip:-${ips[0]}}"
+
+  echo "Selected IP: $public_ip"
 }
 
 # Function to parse command line arguments
@@ -176,6 +156,7 @@ parse_args() {
   fi
   if [ -z "$NODE_IP" ]; then
     NODE_IP=$(get_preferred_ip)
+    echo -e "${YELLOW}Node IP: Auto-detected as $NODE_IP${NC}"
     # Check if the first IP is a valid IPv4 address
     if [[ ! "${NODE_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       echo -e "${YELLOW}Node IP: Unable to auto-detect a valid IP address. Specify using --node-ip${NC}"
