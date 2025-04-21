@@ -62,11 +62,11 @@ function get_preferred_ip() {
   local public_ip=""
 
   for ip in "${ips[@]}"; do
-      # Check if IP is a public address (non-private range)
-      if [[ ! "$ip" =~ ^(10\.|192\.168\.|172\.16\.) ]]; then
-          public_ip="$ip"
-          break
-      fi
+    # Check if IP is a public address (non-private range)
+    if [[ ! "$ip" =~ ^(10\.|192\.168\.|172\.16\.) ]]; then
+      public_ip="$ip"
+      break
+    fi
   done
 
   # Default to the first IP if no public IP was found
@@ -77,15 +77,15 @@ function get_preferred_ip() {
 
 # Function to parse command line arguments
 parse_args() {
-  if [ $# -lt 1 ]; then
+  if [[ $# -lt 1 ]]; then
     usage
   fi
 
   OPERATION=$1
   shift
 
-  if [ "$OPERATION" != "install" ] && [ "$OPERATION" != "uninstall" ]; then
-    echo "Invalid operation: $ACTION"
+  if [[ "$OPERATION" != "install" ]] && [[ "$OPERATION" != "uninstall" ]]; then
+    echo "Invalid operation: $OPERATION"
     usage
   fi
   while [[ $# -gt 0 ]]; do
@@ -158,7 +158,12 @@ parse_args() {
     NODE_IP=$(get_preferred_ip)
     echo -e "${YELLOW}Node IP: Auto-detected as $NODE_IP${NC}"
     # Check if the first IP is a valid IPv4 address
-    if [[ ! "${NODE_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    # Regex to validate IPv4 addresses:
+    # - Matches four groups of numbers separated by dots.
+    # - Each group must be between 0-255.
+    # - Ensures proper IPv4 format (e.g., 192.168.1.1).
+    local ip_regex='^(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)$'
+    if [[ ! "${NODE_IP}" =~ $ip_regex ]]; then
       echo -e "${YELLOW}Node IP: Unable to auto-detect a valid IP address. Specify using --node-ip${NC}"
       usage
     fi
@@ -197,7 +202,7 @@ function is_operator_installed() {
   local deployment_label="$3"
   local crd_name="$4"
 
-  echo -n "Checking for ${operator_name} in namespace '$namespace'... "
+  echo -e "${YELLOW}Checking for ${operator_name} in namespace '$namespace'...${NC}"
 
   # Check if namespace exists
   if ! kubectl get ns "${namespace}" &>/dev/null; then
@@ -271,7 +276,7 @@ install_k3s() {
 }
 
 install_argocd() {
-  if [ "$SKIP_ARGOCD" == "true" ]; then
+  if [[ "$SKIP_ARGOCD" == "true" ]]; then
     echo -e "${YELLOW}Skipping ArgoCD installation...${NC}"
     return
   fi
@@ -279,7 +284,7 @@ install_argocd() {
   is_operator_installed "$ARGOCD_NAMESPACE" "ArgoCD" "app.kubernetes.io/name=argocd-server"
   local is_upgrade=$?
 
-  if is_upgrade; then
+  if [[ $is_upgrade -eq 0 ]]; then
     echo -e "${GREEN}Detected an existing ArgoCD in cluster namespace. Will try upgrade${NC}"
     is_upgrade=1
   fi
@@ -298,7 +303,7 @@ install_argocd() {
 
   # Determine the operation (install or upgrade)
   local operation="install"
-  if $is_upgrade; then
+  if [[ $is_upgrade -eq 1 ]]; then
     operation="upgrade"
     echo -e "${YELLOW}Upgrading ArgoCD....${NC}"
   else
@@ -307,7 +312,7 @@ install_argocd() {
   helm repo add argo https://argoproj.github.io/argo-helm
   helm repo update
 
-  if [ "$argocd_type" == "NodePort" ]; then
+  if [[ "$argocd_type" == "NodePort" ]]; then
     helm "$operation" "$ARGOCD_NAME" argo/argo-cd \
       --namespace "$ARGOCD_NAMESPACE" \
       --version "$ARGOCD_VERSION" \
@@ -323,7 +328,8 @@ install_argocd() {
       --set server.service.port="$ARGOCD_PORT"
   fi
 
-  if $? -ne 0; then
+  local installed=$?
+  if [[ ! $installed ]]; then
     echo -e "${RED}Error installing ArgoCD${NC}"
     return
   fi
@@ -357,7 +363,7 @@ install_argocd_cli() {
 
 # Function to install External Secrets Operator
 install_eso() {
-  if [ ${SKIP_ESO} == "true" ]; then
+  if [[ ${SKIP_ESO} == "true" ]]; then
     echo -e "${YELLOW}Skipping External Secrets Operator installation...${NC}"
     return
   fi
@@ -373,7 +379,7 @@ install_eso() {
 
   # Check if CRD is already installed
   # local installCRD = is_crd_installed "externalsecrets.external-secrets.io" && false || true
-  if ! "$is_upgrade" && is_crd_installed "externalsecrets.external-secrets.io"; then
+  if [[ $is_upgrade -eq 0 ]] && is_crd_installed "externalsecrets.external-secrets.io"; then
     echo -e "${GREEN}External Secrets Operator CRD is already installed. Only one instance is allowed per cluster ${NC}"
     return
   fi
@@ -409,7 +415,7 @@ uninstall_all() {
   echo -e "${YELLOW}Starting uninstallation process...${NC}"
 
   # Uninstall ArgoCD
-  if [ "$SKIP_ARGOCD" == "false" ]; then
+  if [[ "$SKIP_ARGOCD" == "false" ]]; then
     echo -e "${YELLOW}Uninstalling ArgoCD...${NC}"
     if kubectl get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
       helm uninstall "$ARGOCD_NAME" -n "$ARGOCD_NAMESPACE"
@@ -425,7 +431,7 @@ uninstall_all() {
   fi
 
   # Uninstall External Secrets Operator
-  if [ "$SKIP_ESO" == "false" ]; then
+  if [[ "$SKIP_ESO" == "false" ]]; then
     echo -e "${YELLOW}Uninstalling External Secrets Operator...${NC}"
     if kubectl get namespace "$ESO_NAMESPACE" &>/dev/null; then
       helm uninstall "$ESO_NAME" -n "$ESO_NAMESPACE"
@@ -462,7 +468,7 @@ install_dependencies() {
 
   # Check if Helm is required and not installed, then install it
   # Helm is needed if ArgoCD or External Secrets Operator installation is not skipped
-  if { [ "$SKIP_ARGOCD" == "false" ] || [ "$SKIP_ESO" == "false" ]; } && ! command_exists helm; then
+  if [[ "$SKIP_ARGOCD" == "false" || "$SKIP_ESO" == "false" ]] && ! command_exists helm; then
     echo -e "${YELLOW}Installing Helm...${NC}"
     curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
     echo -e "${GREEN}Helm installed successfully${NC}"
