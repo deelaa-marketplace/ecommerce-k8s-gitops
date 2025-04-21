@@ -162,8 +162,8 @@ parse_args() {
     # - Matches four groups of numbers separated by dots.
     # - Each group must be between 0-255.
     # - Ensures proper IPv4 format (e.g., 192.168.1.1).
-    local ip_regex='^(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)$'
-    if [[ ! "${NODE_IP}" =~ $ip_regex ]]; then
+    //local ip_regex='^(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)$'
+    if [[ ! "${NODE_IP}" ]]; then
       echo -e "${YELLOW}Node IP: Unable to auto-detect a valid IP address. Specify using --node-ip${NC}"
       usage
     fi
