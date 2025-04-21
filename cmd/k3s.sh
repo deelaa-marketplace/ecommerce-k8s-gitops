@@ -279,7 +279,7 @@ install_argocd() {
     is_upgrade=1
   fi
   # Check if ArgoCD CRD is already installed in another cluster
-  if [[ ! $is_upgrade -eq 0 ]] && is_crd_installed "applications.argoproj.io"; then
+  if [[ $is_upgrade -ne 0 ]] && is_crd_installed "applications.argoproj.io"; then
     echo -e "${GREEN}ArgoCD is already installed. Only one instance is allowed per cluster${NC}"
     return
   fi
@@ -319,7 +319,7 @@ install_argocd() {
   fi
 
   local installed=$?
-  if [[ ! "$installed" -eq 0 ]]; then
+  if [[ "$installed" -ne 0 ]]; then
     echo -e "${RED}Error installing ArgoCD${NC}"
     return
   fi
@@ -369,7 +369,7 @@ install_eso() {
 
   # Check if CRD is already installed
   # local installCRD = is_crd_installed "externalsecrets.external-secrets.io" && false || true
-  if [[ ! "$is_upgrade" -eq 0 ]] && is_crd_installed "externalsecrets.external-secrets.io"; then
+  if [[ "$is_upgrade" -ne 0 ]] && is_crd_installed "externalsecrets.external-secrets.io"; then
     echo -e "${GREEN}External Secrets Operator CRD is already installed. Only one instance is allowed per cluster ${NC}"
     return
   fi
