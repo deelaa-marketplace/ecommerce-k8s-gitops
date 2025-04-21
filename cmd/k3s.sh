@@ -162,7 +162,7 @@ parse_args() {
     # - Matches four groups of numbers separated by dots.
     # - Each group must be between 0-255.
     # - Ensures proper IPv4 format (e.g., 192.168.1.1).
-    //local ip_regex='^(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)$'
+    #local ip_regex='^(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)$'
     if [[ ! "${NODE_IP}" ]]; then
       echo -e "${YELLOW}Node IP: Unable to auto-detect a valid IP address. Specify using --node-ip${NC}"
       usage
@@ -195,12 +195,11 @@ confirm() {
 }
 
 # Generic function to detect a Kubernetes operator in a specific namespace
-# Usage: is_operator_installed <namespace> <operator_name> <deployment_label> [<crd_name>]
+# Usage: is_operator_installed <namespace> <operator_name> <deployment_label>
 function is_operator_installed() {
   local namespace="$1"
   local operator_name="$2"
   local deployment_label="$3"
-  local crd_name="$4"
 
   echo -e "${YELLOW}Checking for ${operator_name} in namespace '$namespace'...${NC}"
 
@@ -212,21 +211,12 @@ function is_operator_installed() {
   fi
 
   # Check for deployment with the specified label
-  if ! kubectl get deployments -n "${namespace}" -l "$deployment_label" &>/dev/null; then
-    echo -e "❌ ${RED}${operator_name} deployment not found (label: ${deployment_label}) in namespace '${namespace}'${NC}"
-    return 1
+  if kubectl get deployments -n "${namespace}" -l "$deployment_label" &>/dev/null; then
+    echo -e "${GREEN}${operator_name} deployment found (label: ${deployment_label}) in namespace '${namespace}'${NC}"
+    return 0
   fi
 
-  # Optionally check for CRD
-  if [ -n "$crd_name" ]; then
-    if ! kubectl get crd "${crd_name}" &>/dev/null; then
-      echo -e "❌ ${RED}${operator_name} CRD not found${NC}"
-      return 1
-    fi
-  fi
-
-  echo -e "✅ ${operator_name} is already installed and running${NC}"
-  return 0
+  return 1
 }
 
 is_crd_installed() {
@@ -289,7 +279,7 @@ install_argocd() {
     is_upgrade=1
   fi
   # Check if ArgoCD CRD is already installed in another cluster
-  if (! is_upgrade) && is_crd_installed "applications.argoproj.io"; then
+  if [[ ! $is_upgrade -eq 0 ]] && is_crd_installed "applications.argoproj.io"; then
     echo -e "${GREEN}ArgoCD is already installed. Only one instance is allowed per cluster${NC}"
     return
   fi
@@ -303,7 +293,7 @@ install_argocd() {
 
   # Determine the operation (install or upgrade)
   local operation="install"
-  if [[ $is_upgrade -eq 1 ]]; then
+  if [[ $is_upgrade -eq 0 ]]; then
     operation="upgrade"
     echo -e "${YELLOW}Upgrading ArgoCD....${NC}"
   else
@@ -329,7 +319,7 @@ install_argocd() {
   fi
 
   local installed=$?
-  if [[ ! $installed ]]; then
+  if [[ ! "$installed" -eq 0 ]]; then
     echo -e "${RED}Error installing ArgoCD${NC}"
     return
   fi
@@ -372,14 +362,14 @@ install_eso() {
   is_operator_installed "$ESO_NAMESPACE" "ESO" "app.kubernetes.io/name=${ESO_NAME}" || return
   local is_upgrade=$?
 
-  if is_upgrade; then
+  if [[ "$is_upgrade" -eq 0 ]]; then
     echo -e "${GREEN}Detected an existing ESO in cluster namespace. Will try an upgrade${NC}"
     is_upgrade=1
   fi
 
   # Check if CRD is already installed
   # local installCRD = is_crd_installed "externalsecrets.external-secrets.io" && false || true
-  if [[ $is_upgrade -eq 0 ]] && is_crd_installed "externalsecrets.external-secrets.io"; then
+  if [[ ! "$is_upgrade" -eq 0 ]] && is_crd_installed "externalsecrets.external-secrets.io"; then
     echo -e "${GREEN}External Secrets Operator CRD is already installed. Only one instance is allowed per cluster ${NC}"
     return
   fi
