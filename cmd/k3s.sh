@@ -22,14 +22,12 @@ CLUSTER_NAME=$DEFAULT_CLUSTER_NAME
 NODE_IP=""
 # ArgoCD variables
 ARGOCD_VERSION=$DEFAULT_ARGOCD_VERSION
-ARGOCD_CHART_VERSION=""
 ARGOCD_NAME="argocd"
 ARGOCD_PORT=$DEFAULT_ARGOCD_PORT
 ARGOCD_NAMESPACE=$DEFAULT_ARGOCD_NAMESPACE
 SKIP_ARGOCD="false"
 # ESO variables
 ESO_VERSION=$DEFAULT_ESO_VERSION
-ESO_CHART_VERSION=""
 ESO_NAME=$DEFAULT_ESO_NAME
 ESO_NAMESPACE=$DEFAULT_ESO_NAMESPACE
 SKIP_ESO="false"
@@ -203,20 +201,7 @@ parse_args() {
   # convert to v prefix
 
   ARGOCD_VERSION=$(to_v_prefix "$ARGOCD_VERSION")
-  #ARGOCD_CHART_VERSION=$(get_chart_version_for_app_version "argo/argo-cd" "$ARGOCD_VERSION")
-  if [[ "$SKIP_ARGOCD" == "false" ]] &&
-    ! ARGOCD_CHART_VERSION=$(get_chart_version_for_app_version "argo/argo-cd" "$ARGOCD_VERSION"); then
-    echo -e "${RED}Error: Unable to find chart version for ArgoCD version $ARGOCD_VERSION${NC}"
-    usage
-  fi
-
   ESO_VERSION=$(to_v_prefix "$ESO_VERSION")
-  #ESO_CHART_VERSION=$(get_chart_version_for_app_version "external-secrets/external-secrets" "$ESO_VERSION")
-  if [[ "$SKIP_ESO" == "false" ]] &&
-    ! ESO_CHART_VERSION=$(get_chart_version_for_app_version "external-secrets/external-secrets" "$ESO_VERSION"); then
-    echo -e "${RED}Error: Unable to find chart version for ESO version $ESO_VERSION${NC}"
-    usage
-  fi
 
   if [[ ! "$ARGOCD_PORT" =~ ^[0-9]+$ ]]; then
     echo -e "${RED}Error: ArgoCD port must be a number${NC}"
@@ -241,12 +226,10 @@ print_config() {
   echo -e "${YELLOW}Cluster Name: ${GREEN}$CLUSTER_NAME${NC}"
   echo -e "${YELLOW}Node IP: ${GREEN}$NODE_IP${NC}"
   echo -e "${YELLOW}ArgoCD Version: ${GREEN}$ARGOCD_VERSION${NC}"
-  echo -e "${YELLOW}ArgoCD Chart Version: ${GREEN}$ARGOCD_CHART_VERSION${NC}"
   echo -e "${YELLOW}ArgoCD Port: ${GREEN}$ARGOCD_PORT${NC}"
   echo -e "${YELLOW}ArgoCD Namespace: ${GREEN}$ARGOCD_NAMESPACE${NC}"
   echo -e "${YELLOW}Skip ArgoCD: ${GREEN}$SKIP_ARGOCD${NC}"
   echo -e "${YELLOW}ESO Version: ${GREEN}$ESO_VERSION${NC}"
-  echo -e "${YELLOW}ESO Chart Version: ${GREEN}$ESO_CHART_VERSION${NC}"
   echo -e "${YELLOW}ESO Name: ${GREEN}$ESO_NAME${NC}"
   echo -e "${YELLOW}ESO Namespace: ${GREEN}$ESO_NAMESPACE${NC}"
   echo -e "${YELLOW}Skip ESO: ${GREEN}$SKIP_ESO${NC}"
@@ -360,27 +343,30 @@ install_argocd() {
   fi
 
   # Determine the operation (install or upgrade)
-  local operation="install"
   if [[ $is_upgrade -eq 0 ]]; then
-    operation="upgrade"
-    echo -e "${YELLOW}Upgrading ArgoCD....${NC}"
+    echo -e "${YELLOW}Upgrading ArgoCD to $argocd_type...${NC}"
   else
-    echo -e "${YELLOW}Installing ArgoCD...${NC}"
+    echo -e "${YELLOW}Installing ArgoCD to $argocd_type...${NC}"
   fi
   helm repo add argo https://argoproj.github.io/argo-helm
   helm repo update
+  local chat_version
+  if ! chat_version=$(get_chart_version_for_app_version "argo/argo-cd" "$ARGOCD_VERSION"); then
+    echo -e "${RED}Error: Unable to find chart version for ArgoCD version $ARGOCD_VERSION${NC}"
+    return
+  fi
 
   if [[ "$argocd_type" == "NodePort" ]]; then
     helm upgrade --install "$ARGOCD_NAME" argo/argo-cd \
       --namespace "$ARGOCD_NAMESPACE" \
-      --version "$ARGOCD_VERSION" \
+      --version "$chat_version" \
       --create-namespace \
       --set server.service.type=$argocd_type \
       --set server.service.nodePort="$ARGOCD_PORT"
   else
     helm upgrade --install "$ARGOCD_NAME" argo/argo-cd \
       --namespace "$ARGOCD_NAMESPACE" \
-      --version "$ARGOCD_CHART_VERSION" \
+      --version "$chat_version" \
       --create-namespace \
       --set server.service.type=$argocd_type \
       --set server.service.port="$ARGOCD_PORT"
@@ -447,17 +433,18 @@ install_eso() {
   helm repo add external-secrets https://charts.external-secrets.io
   helm repo update
 
-  local operation="install"
-  if [[ "$is_upgrade" -eq 0 ]]; then
-    operation="upgrade"
+  # Check if the chart version is available
+  local chat_version
+  if ! chat_version=$(get_chart_version_for_app_version "external-secrets/external-secrets" "$ESO_VERSION"); then
+    echo -e "${RED}Error: Unable to find chart version for ESO version $ESO_VERSION${NC}"
+    return
   fi
-
   # Install the operator
-  helm "$operation" "$ESO_NAME" \
+  helm upgrade --install "$ESO_NAME" \
     external-secrets/external-secrets \
     -n "$ESO_NAMESPACE" \
     --create-namespace \
-    --version "$ESO_CHART_VERSION" \
+    --version "$chat_version" \
     --set installCRDs=true
 
   # Wait for the operator to be ready
