@@ -22,12 +22,14 @@ CLUSTER_NAME=$DEFAULT_CLUSTER_NAME
 NODE_IP=""
 # ArgoCD variables
 ARGOCD_VERSION=$DEFAULT_ARGOCD_VERSION
+ARGOCD_CHART_VERSION=""
 ARGOCD_NAME="argocd"
 ARGOCD_PORT=$DEFAULT_ARGOCD_PORT
 ARGOCD_NAMESPACE=$DEFAULT_ARGOCD_NAMESPACE
 SKIP_ARGOCD="false"
 # ESO variables
 ESO_VERSION=$DEFAULT_ESO_VERSION
+ESO_CHART_VERSION=""
 ESO_NAME=$DEFAULT_ESO_NAME
 ESO_NAMESPACE=$DEFAULT_ESO_NAMESPACE
 SKIP_ESO="false"
@@ -75,6 +77,54 @@ function get_preferred_ip() {
   echo "Selected IP: $public_ip"
 }
 
+function get_chart_version_for_app_version() {
+  local chart_name="$1"
+  local target_app_version="$2"
+
+  # Get newest chart version matching the app version (sorted by semver)
+  local chart_version
+  chart_version=$(helm search repo "$chart_name" --versions --output json 2>/dev/null |
+    jq -r --arg av "$target_app_version" '
+            [.[] | select(.app_version == $av) |
+            {version: .version, chunks: (.version | split(".") | map(tonumber))}] |
+            sort_by(.chunks) |
+            reverse |
+            .[0].version // empty
+        ')
+
+  if [ -z "$chart_version" ]; then
+    echo "ERROR: No chart version found for app version '$target_app_version'" >&2
+    return 1
+  fi
+
+  echo "$chart_version"
+}
+
+function get_app_version_for_chart_version() {
+  local chart_name="$1"
+  local target_chart_version="$2"
+
+  # Get versions and sort by app_version (newest first)
+  local app_version
+  app_version=$(helm search repo "$chart_name" --versions --output json 2>/dev/null |
+    jq -r --arg chart_ver "$target_chart_version" '
+            [.[] | select(.version == $chart_ver) | .app_version] |
+            sort_by(. | sub("^v"; "") | split(".") | map(tonumber)) |
+            reverse | .[0] // empty
+        ')
+
+  if [ -z "$app_version" ]; then
+    echo "ERROR: No app versions found for chart version '$target_chart_version'" >&2
+    return 1
+  fi
+
+  echo "$app_version"
+}
+
+# Function to check and modify the string
+to_v_prefix() {
+  [[ "$1" == v* ]] && echo "$1" || echo "v$1"
+}
 # Function to parse command line arguments
 parse_args() {
   if [[ $# -lt 1 ]]; then
@@ -150,19 +200,33 @@ parse_args() {
     usage
   fi
 
+  # convert to v prefix
+
+  ARGOCD_VERSION=$(to_v_prefix "$ARGOCD_VERSION")
+  #ARGOCD_CHART_VERSION=$(get_chart_version_for_app_version "argo/argo-cd" "$ARGOCD_VERSION")
+  if [[ "$SKIP_ARGOCD" == "false" ]] &&
+    ! ARGOCD_CHART_VERSION=$(get_chart_version_for_app_version "argo/argo-cd" "$ARGOCD_VERSION"); then
+    echo -e "${RED}Error: Unable to find chart version for ArgoCD version $ARGOCD_VERSION${NC}"
+    usage
+  fi
+
+  ESO_VERSION=$(to_v_prefix "$ESO_VERSION")
+  #ESO_CHART_VERSION=$(get_chart_version_for_app_version "external-secrets/external-secrets" "$ESO_VERSION")
+  if [[ "$SKIP_ESO" == "false" ]] &&
+    ! ESO_CHART_VERSION=$(get_chart_version_for_app_version "external-secrets/external-secrets" "$ESO_VERSION"); then
+    echo -e "${RED}Error: Unable to find chart version for ESO version $ESO_VERSION${NC}"
+    usage
+  fi
+
   if [[ ! "$ARGOCD_PORT" =~ ^[0-9]+$ ]]; then
     echo -e "${RED}Error: ArgoCD port must be a number${NC}"
     usage
   fi
+
   if [ -z "$NODE_IP" ]; then
     NODE_IP=$(get_preferred_ip)
     echo -e "${YELLOW}Node IP: Auto-detected as $NODE_IP${NC}"
     # Check if the first IP is a valid IPv4 address
-    # Regex to validate IPv4 addresses:
-    # - Matches four groups of numbers separated by dots.
-    # - Each group must be between 0-255.
-    # - Ensures proper IPv4 format (e.g., 192.168.1.1).
-    #local ip_regex='^(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|1?[0-9][0-9]?)$'
     if [[ ! "${NODE_IP}" ]]; then
       echo -e "${YELLOW}Node IP: Unable to auto-detect a valid IP address. Specify using --node-ip${NC}"
       usage
@@ -173,14 +237,19 @@ parse_args() {
 # Function to print current configuration
 print_config() {
   echo -e "${YELLOW}Current Configuration:${NC}"
-  echo "Operation: $OPERATION"
-  echo "K3s version: $K3S_VERSION"
-  echo "ArgoCD version: $ARGOCD_VERSION"
-  echo "ArgoCD port: $ARGOCD_PORT"
-  echo "ArgoCD namespace: $ARGOCD_NAMESPACE"
-  echo "Cluster name: $CLUSTER_NAME"
-  echo "Node IP: $NODE_IP"
-  echo ""
+  echo -e "${YELLOW}K3s Version: ${GREEN}$K3S_VERSION${NC}"
+  echo -e "${YELLOW}Cluster Name: ${GREEN}$CLUSTER_NAME${NC}"
+  echo -e "${YELLOW}Node IP: ${GREEN}$NODE_IP${NC}"
+  echo -e "${YELLOW}ArgoCD Version: ${GREEN}$ARGOCD_VERSION${NC}"
+  echo -e "${YELLOW}ArgoCD Chart Version: ${GREEN}$ARGOCD_CHART_VERSION${NC}"
+  echo -e "${YELLOW}ArgoCD Port: ${GREEN}$ARGOCD_PORT${NC}"
+  echo -e "${YELLOW}ArgoCD Namespace: ${GREEN}$ARGOCD_NAMESPACE${NC}"
+  echo -e "${YELLOW}Skip ArgoCD: ${GREEN}$SKIP_ARGOCD${NC}"
+  echo -e "${YELLOW}ESO Version: ${GREEN}$ESO_VERSION${NC}"
+  echo -e "${YELLOW}ESO Chart Version: ${GREEN}$ESO_CHART_VERSION${NC}"
+  echo -e "${YELLOW}ESO Name: ${GREEN}$ESO_NAME${NC}"
+  echo -e "${YELLOW}ESO Namespace: ${GREEN}$ESO_NAMESPACE${NC}"
+  echo -e "${YELLOW}Skip ESO: ${GREEN}$SKIP_ESO${NC}"
 }
 
 # Function to confirm before proceeding
@@ -205,7 +274,7 @@ function is_operator_installed() {
 
   # Check if namespace exists
   if ! kubectl get ns "${namespace}" &>/dev/null; then
-    echo -e "${YELLOW} Namespace '${namespace}' does not exist..${NC}"
+    echo -e "${YELLOW}Namespace '${namespace}' does not exist..${NC}"
     #kubectl create namespace $namespace
     return 1
   fi
@@ -302,16 +371,16 @@ install_argocd() {
   helm repo update
 
   if [[ "$argocd_type" == "NodePort" ]]; then
-    helm "$operation" "$ARGOCD_NAME" argo/argo-cd \
+    helm upgrade --install "$ARGOCD_NAME" argo/argo-cd \
       --namespace "$ARGOCD_NAMESPACE" \
       --version "$ARGOCD_VERSION" \
       --create-namespace \
       --set server.service.type=$argocd_type \
       --set server.service.nodePort="$ARGOCD_PORT"
   else
-    helm "$operation" "$ARGOCD_NAME" argo/argo-cd \
+    helm upgrade --install "$ARGOCD_NAME" argo/argo-cd \
       --namespace "$ARGOCD_NAMESPACE" \
-      --version "$ARGOCD_VERSION" \
+      --version "$ARGOCD_CHART_VERSION" \
       --create-namespace \
       --set server.service.type=$argocd_type \
       --set server.service.port="$ARGOCD_PORT"
@@ -358,8 +427,8 @@ install_eso() {
   fi
 
   # Check if the operator is already installed
-  is_operator_installed "$ESO_NAMESPACE" "ESO" "app.kubernetes.io/name=${ESO_NAME}" || return
-  local is_upgrade=$?
+  local is_upgrade
+  is_upgrade=$(is_operator_installed "$ESO_NAMESPACE" "ESO" "app.kubernetes.io/name=${ESO_NAME}")
 
   if [[ "$is_upgrade" -eq 0 ]]; then
     echo -e "${GREEN}Detected an existing ESO in cluster namespace. Will try an upgrade${NC}"
@@ -388,7 +457,7 @@ install_eso() {
     external-secrets/external-secrets \
     -n "$ESO_NAMESPACE" \
     --create-namespace \
-    --version "$ESO_VERSION" \
+    --version "$ESO_CHART_VERSION" \
     --set installCRDs=true
 
   # Wait for the operator to be ready
@@ -453,6 +522,21 @@ check_dependencies() {
 # This function checks for required tools like Helm and installs them if they are not already present.
 install_dependencies() {
   echo -e "${YELLOW}Checking dependencies...${NC}"
+
+  # Check if curl is installed else install it
+  if ! command_exists curl; then
+    echo -e "${RED}curl is not installed. Installing...${NC}"
+    sudo apt-get install -y curl
+  else
+    echo -e "${GREEN}curl is already installed${NC}"
+  fi
+  # Check if jq is installed else install it
+  if ! command_exists jq; then
+    echo -e "${RED}jq is not installed. Installing...${NC}"
+    sudo apt-get install -y jq
+  else
+    echo -e "${GREEN}jq is already installed${NC}"
+  fi
 
   # Check if Helm is required and not installed, then install it
   # Helm is needed if ArgoCD or External Secrets Operator installation is not skipped
