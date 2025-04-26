@@ -437,7 +437,9 @@ install_k3s() {
     install_cmd+="INSTALL_K3S_VERSION=$K3S_VERSION "
     install_cmd+="K3S_CLUSTER_NAME=$CLUSTER_NAME "
     install_cmd+="K3S_NODE_IP=$NODE_IP "
-    install_cmd+="sh -s - --disable traefik --write-kubeconfig-mode 644"
+    install_cmd+="sh -s - --write-kubeconfig-mode 644"
+#    install_cmd+="sh -s - --disable traefik --write-kubeconfig-mode 644"
+    #install_cmd+=" --kubelet-arg 'node-ip=$NODE_IP'"
 
     if $VERBOSE; then
         echo -e "${YELLOW}Running: $install_cmd${NC}"

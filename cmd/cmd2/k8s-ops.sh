@@ -211,7 +211,8 @@ install_argocd() {
     
     # Patch service to use NodePort
     kubectl patch svc argocd-server -n $ARGOCD_NAMESPACE -p '{"spec": {"type": "NodePort", "ports": [{"nodePort": '"$ARGOCD_PORT"', "port": 80, "protocol": "TCP", "targetPort": 8080}]}}'
-    
+
+
     # Get initial admin password
     ARGOCD_PASSWORD=$(kubectl -n $ARGOCD_NAMESPACE get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
     

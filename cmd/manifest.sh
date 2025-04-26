@@ -9,7 +9,7 @@ NC='\033[0m' # No Color
 
 # Default configurations
 DEFAULT_NAMESPACE="default"
-DEFAULT_REGION="us-east-1"
+DEFAULT_REGION="eu-west-1"
 DEFAULT_MANIFESTS_DIR_NAME="manifests"
 DEFAULT_OUTPUT_DIR_NAME="manifests-output"
 DEFAULT_WORKING_DIR="."
@@ -173,6 +173,7 @@ process_template() {
       return 1
     fi
     if $DRY_RUN; then
+      echo -e "${YELLOW}Dry run validation succeeded for $template_file${NC}"
       return 0
     fi
 
@@ -190,6 +191,7 @@ process_template() {
       return 1
     fi
     if $DRY_RUN; then
+      echo -e "${YELLOW}Dry run validation succeeded for $template_file${NC}"
       return 0
     fi
 
@@ -240,7 +242,7 @@ process_manifests_directory() {
 #      echo "Skipping output file: $file"
 #      continue
 #    fi
-     echo "${YELLOW}Processing $file...${NC}"
+     echo -e "${YELLOW}Processing ${file}...${NC}"
     # Process the manifest template
     process_template "$file" "$action" || {
       echo -e "${RED}Error processing $file${NC}"
@@ -252,7 +254,7 @@ process_manifests_directory() {
   for subdir in "${subdirectories[@]}"; do
     echo "${YELLOW}Entering directory: $subdir${NC}"
     process_manifests_directory "$subdir" "$action" || {
-      echo -e "${RED}Error processing manifests in $subdir${NC}"
+      echo -e "${RED}Error processing manifests in ${subdir}${NC}"
       return 1
     }
   done
