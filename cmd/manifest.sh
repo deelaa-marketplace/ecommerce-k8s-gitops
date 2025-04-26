@@ -117,14 +117,6 @@ process_template() {
 
   # Export variables for envsubst
   export NAMESPACE REGION AWS_ACCESS_KEY AWS_SECRET_KEY SSH_PRIVATE_KEY
-  #    local AWS_ACCESS_KEY_B64
-  #    AWS_ACCESS_KEY_B64=$(echo -n "$AWS_ACCESS_KEY" | base64 -w0)
-  #    local AWS_SECRET_KEY_B64
-  #    AWS_SECRET_KEY_B64=$(echo -n "$AWS_SECRET_KEY" | base64 -w0)
-  #    local SSH_PRIVATE_KEY_B64
-  #    SSH_PRIVATE_KEY_B64=$(echo -n "$SSH_PRIVATE_KEY" | base64 -w0)
-  #    export AWS_ACCESS_KEY_B64 AWS_SECRET_KEY_B64 SSH_PRIVATE_KEY_B64
-  # Check if AWS_ACCESS_KEY_B64
   if [[ -n "$AWS_ACCESS_KEY" ]]; then
     local AWS_ACCESS_KEY_B64
     AWS_ACCESS_KEY_B64=$(echo -n "$AWS_ACCESS_KEY" | base64 -w0)
@@ -171,7 +163,6 @@ process_template() {
 
   if $DRY_RUN; then
     echo -e "${YELLOW}Dry run: Would ${action} resources from $template_file${NC}"
-    return 0
   fi
 
   case "$action" in
@@ -180,6 +171,9 @@ process_template() {
     if ! echo "$processed_manifest" | kubectl apply --dry-run=client -f - &>/dev/null; then
       echo -e "${RED}Manifest validation failed for $template_file${NC}"
       return 1
+    fi
+    if $DRY_RUN; then
+      return 0
     fi
 
     # Apply manifest
@@ -190,6 +184,15 @@ process_template() {
     echo -e "${GREEN}Successfully applied $template_file${NC}"
     ;;
   uninstall)
+    # Dry-run validation (even when not in full dry-run mode)
+    if ! echo "$processed_manifest" | kubectl delete --dry-run=client -f - &>/dev/null; then
+      echo -e "${RED}Manifest validation failed for $template_file${NC}"
+      return 1
+    fi
+    if $DRY_RUN; then
+      return 0
+    fi
+
     # Delete resources
     echo "$processed_manifest" | kubectl delete -f - --ignore-not-found || {
       echo -e "${RED}Failed to delete resources from $template_file${NC}"
