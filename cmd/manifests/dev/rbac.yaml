@@ -1,0 +1,30 @@
+# dev/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dev-secret-manager
+  namespace: "ecommerce-dev"
+rules:
+  # Allow ESO to read/write Kubernetes Secrets
+  - apiGroups: [ "" ]
+    resources: [ "secrets" ]
+    verbs: [ "get", "create", "update" ]
+  # Allow ESO to read/write External Secrets
+  - apiGroups: [ "external-secrets.io" ]
+    resources: [ "externalsecrets" ]
+    verbs: [ "create", "get", "list" ]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dev-secret-access
+  namespace: "ecommerce-dev"
+subjects:
+  - kind: ServiceAccount
+    name: external-secrets-controller  # ESO's default SA
+    namespace: external-secrets
+roleRef:
+  kind: Role
+  name: dev-secret-manager
+  apiGroup: rbac.authorization.k8s.io

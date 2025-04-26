@@ -1,601 +1,735 @@
 #!/bin/bash
 
-# Colors for output
+# Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Default variables with parameterized values
+# Default configurations
 DEFAULT_K3S_VERSION="v1.32.3+k3s1"
-DEFAULT_ARGOCD_VERSION="v2.14.10"
-DEFAULT_ARGOCD_PORT="80"
-DEFAULT_ARGOCD_NAMESPACE="argocd"
 DEFAULT_CLUSTER_NAME="development"
+DEFAULT_ARGO_VERSION="v2.14.10"
+DEFAULT_ARGO_NS="argocd"
+DEFAULT_ARGO_PORT="8080"
 DEFAULT_ESO_VERSION="0.16.1"
+DEFAULT_ESO_NS="external-secrets"
 DEFAULT_ESO_NAME="external-secrets"
-DEFAULT_ESO_NAMESPACE="external-secrets"
 
-# Variables that can be overridden by command line options
+# Initialize variables
 K3S_VERSION=$DEFAULT_K3S_VERSION
 CLUSTER_NAME=$DEFAULT_CLUSTER_NAME
 NODE_IP=""
-# ArgoCD variables
-ARGOCD_VERSION=$DEFAULT_ARGOCD_VERSION
-ARGOCD_NAME="argocd"
-ARGOCD_PORT=$DEFAULT_ARGOCD_PORT
-ARGOCD_NAMESPACE=$DEFAULT_ARGOCD_NAMESPACE
-SKIP_ARGOCD="false"
-# ESO variables
+ARGO_VERSION=$DEFAULT_ARGO_VERSION
+ARGO_NS=$DEFAULT_ARGO_NS
+ARGO_PORT=$DEFAULT_ARGO_PORT
+SKIP_ARGO=false
 ESO_VERSION=$DEFAULT_ESO_VERSION
+ESO_NS=$DEFAULT_ESO_NS
 ESO_NAME=$DEFAULT_ESO_NAME
-ESO_NAMESPACE=$DEFAULT_ESO_NAMESPACE
-SKIP_ESO="false"
+SKIP_ESO=false
+VERBOSE=false
+FORCE=false
 
-# Function to print usage information
+# Dependency checks
+REQUIRED_CMDS=("kubectl" "helm" "curl" "jq")
+MISSING_CMDS=()
+
+# --- Helper Functions ---
+
+# Print usage information
 usage() {
-  echo "Usage: $0 [options]"
-  echo "Options:"
-  echo "  install                 Install K3s cluster and ArgoCD and ESO"
-  echo "  uninstall               Uninstall K3s cluster and ArgoCD and ESO"
-  echo "  --k3s-version=VERSION   K3s version (default: $DEFAULT_K3S_VERSION)"
-  echo "  --cluster-name=NAME     Cluster name (default: $DEFAULT_CLUSTER_NAME)"
-  echo "  --node-ip=IP            Node IP address (default: auto-detected)"
-  echo "  --argocd-version=VER    ArgoCD version (default: $DEFAULT_ARGOCD_VERSION)"
-  echo "  --argocd-port=PORT      Port for ArgoCD dashboard (default: $DEFAULT_ARGOCD_PORT for LoadBalance or NodePort range is 30000-32767)"
-  echo "  --argocd-ns=NAMESPACE   Namespace for ArgoCD (default: $DEFAULT_ARGOCD_NAMESPACE)"
-  echo "  --skip-argocd           Skip ArgoCD installation (default: $SKIP_ARGOCD)"
-  echo "  --eso-version=VERSION   External Secrets Operator version (default: $DEFAULT_ESO_VERSION)"
-  echo "  --eso-name=NAME         Name for External Secrets Operator (default: $DEFAULT_ESO_NAME)"
-  echo "  --eso-ns=NAMESPACE      Namespace for External Secrets Operator (default: $DEFAULT_ESO_NAMESPACE)"
-  echo "  --skip-eso              Skip External Secrets Operator installation (default: $SKIP_ESO)"
-  echo "  -h, --help              Show this help message"
-  exit 1
-}
-
-function get_preferred_ip() {
-
-  # Get all IPs from hostname -I
-  local ips=($(hostname -I))
-
-  # Define public IP pattern (modify if needed)
-  local public_ip=""
-
-  for ip in "${ips[@]}"; do
-    # Check if IP is a public address (non-private range)
-    if [[ ! "$ip" =~ ^(10\.|192\.168\.|172\.16\.) ]]; then
-      public_ip="$ip"
-      break
-    fi
-  done
-
-  # Default to the first IP if no public IP was found
-  public_ip="${public_ip:-${ips[0]}}"
-
-  echo "Selected IP: $public_ip"
-}
-
-function get_chart_version_for_app_version() {
-  local chart_name="$1"
-  local target_app_version="$2"
-
-  # Get newest chart version matching the app version (sorted by semver)
-  local chart_version
-  chart_version=$(helm search repo "$chart_name" --versions --output json 2>/dev/null |
-    jq -r --arg av "$target_app_version" '
-            [.[] | select(.app_version == $av) |
-            {version: .version, chunks: (.version | split(".") | map(tonumber))}] |
-            sort_by(.chunks) |
-            reverse |
-            .[0].version // empty
-        ')
-
-  if [ -z "$chart_version" ]; then
-    echo "ERROR: No chart version found for app version '$target_app_version'" >&2
-    return 1
-  fi
-
-  echo "$chart_version"
-}
-
-function get_app_version_for_chart_version() {
-  local chart_name="$1"
-  local target_chart_version="$2"
-
-  # Get versions and sort by app_version (newest first)
-  local app_version
-  app_version=$(helm search repo "$chart_name" --versions --output json 2>/dev/null |
-    jq -r --arg chart_ver "$target_chart_version" '
-            [.[] | select(.version == $chart_ver) | .app_version] |
-            sort_by(. | sub("^v"; "") | split(".") | map(tonumber)) |
-            reverse | .[0] // empty
-        ')
-
-  if [ -z "$app_version" ]; then
-    echo "ERROR: No app versions found for chart version '$target_chart_version'" >&2
-    return 1
-  fi
-
-  echo "$app_version"
-}
-
-# Function to check and modify the string
-to_v_prefix() {
-  [[ "$1" == v* ]] && echo "$1" || echo "v$1"
-}
-# Function to parse command line arguments
-parse_args() {
-  if [[ $# -lt 1 ]]; then
-    usage
-  fi
-
-  OPERATION=$1
-  shift
-
-  if [[ "$OPERATION" != "install" ]] && [[ "$OPERATION" != "uninstall" ]]; then
-    echo "Invalid operation: $OPERATION"
-    usage
-  fi
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-    --k3s-version=*)
-      K3S_VERSION="${1#*=}"
-      shift
-      ;;
-    --cluster-name=*)
-      CLUSTER_NAME="${1#*=}"
-      shift
-      ;;
-    --node-ip=*)
-      NODE_IP="${1#*=}"
-      shift
-      ;;
-    --argocd-version=*)
-      ARGOCD_VERSION="${1#*=}"
-      shift
-      ;;
-    --argocd-port=*)
-      ARGOCD_PORT="${1#*=}"
-      shift
-      ;;
-    --argocd-ns=*)
-      ARGOCD_NAMESPACE="${1#*=}"
-      shift
-      ;;
-    --skip-argocd)
-      SKIP_ARGOCD="true"
-      shift
-      ;;
-    --eso-version=*)
-      ESO_VERSION="${1#*=}"
-      shift
-      ;;
-    --eso-name=*)
-      ESO_NAME="${1#*=}"
-      shift
-      ;;
-    --eso-ns=*)
-      ESO_NAMESPACE="${1#*=}"
-      shift
-      ;;
-    --skip-eso)
-      SKIP_ESO="true"
-      shift
-      ;;
-
-    -h | --help)
-      usage
-      ;;
-    *)
-      echo -e "${RED}Unknown option: $1${NC}"
-      usage
-      ;;
-    esac
-  done
-
-  if [ -z "$OPERATION" ]; then
-    echo -e "${RED}Error: Either --install or --uninstall must be specified${NC}"
-    usage
-  fi
-
-  # convert to v prefix
-
-  ARGOCD_VERSION=$(to_v_prefix "$ARGOCD_VERSION")
-  ESO_VERSION=$(to_v_prefix "$ESO_VERSION")
-
-  if [[ ! "$ARGOCD_PORT" =~ ^[0-9]+$ ]]; then
-    echo -e "${RED}Error: ArgoCD port must be a number${NC}"
-    usage
-  fi
-
-  if [ -z "$NODE_IP" ]; then
-    NODE_IP=$(get_preferred_ip)
-    echo -e "${YELLOW}Node IP: Auto-detected as $NODE_IP${NC}"
-    # Check if the first IP is a valid IPv4 address
-    if [[ ! "${NODE_IP}" ]]; then
-      echo -e "${YELLOW}Node IP: Unable to auto-detect a valid IP address. Specify using --node-ip${NC}"
-      usage
-    fi
-  fi
-}
-
-# Function to print current configuration
-print_config() {
-  echo -e "${YELLOW}Current Configuration:${NC}"
-  echo -e "${YELLOW}K3s Version: ${GREEN}$K3S_VERSION${NC}"
-  echo -e "${YELLOW}Cluster Name: ${GREEN}$CLUSTER_NAME${NC}"
-  echo -e "${YELLOW}Node IP: ${GREEN}$NODE_IP${NC}"
-  echo -e "${YELLOW}ArgoCD Version: ${GREEN}$ARGOCD_VERSION${NC}"
-  echo -e "${YELLOW}ArgoCD Port: ${GREEN}$ARGOCD_PORT${NC}"
-  echo -e "${YELLOW}ArgoCD Namespace: ${GREEN}$ARGOCD_NAMESPACE${NC}"
-  echo -e "${YELLOW}Skip ArgoCD: ${GREEN}$SKIP_ARGOCD${NC}"
-  echo -e "${YELLOW}ESO Version: ${GREEN}$ESO_VERSION${NC}"
-  echo -e "${YELLOW}ESO Name: ${GREEN}$ESO_NAME${NC}"
-  echo -e "${YELLOW}ESO Namespace: ${GREEN}$ESO_NAMESPACE${NC}"
-  echo -e "${YELLOW}Skip ESO: ${GREEN}$SKIP_ESO${NC}"
-}
-
-# Function to confirm before proceeding
-confirm() {
-  print_config
-  read -p "Do you want to proceed with these settings? (y/n) " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo -e "${RED}Operation aborted by user${NC}"
+    echo -e "${BLUE}Usage: $0 [install|uninstall] [OPTIONS]${NC}"
+    echo
+    echo -e "${BLUE}Options:${NC}"
+    echo "  --k3s-version VERSION     Specify K3s version (default: $DEFAULT_K3S_VERSION)"
+    echo "  --cluster-name NAME       Specify cluster name (default: $DEFAULT_CLUSTER_NAME)"
+    echo "  --node-ip IP              Specify node IP address (auto-detected if not provided)"
+    echo "  --argocd-version VERSION  Specify ArgoCD version (default: $DEFAULT_ARGO_VERSION)"
+    echo "  --argocd-port PORT        Specify ArgoCD dashboard port (default: $DEFAULT_ARGO_PORT)"
+    echo "  --argocd-ns NAMESPACE     Specify ArgoCD namespace (default: $DEFAULT_ARGO_NS)"
+    echo "  --skip-argocd             Skip ArgoCD installation"
+    echo "  --eso-version VERSION     Specify ESO version (default: $DEFAULT_ESO_VERSION)"
+    echo "  --eso-ns NAMESPACE        Specify ESO namespace (default: $DEFAULT_ESO_NS)"
+    echo "  --eso-name NAME           Specify ESO name (default: $DEFAULT_ESO_NAME)"
+    echo "  --skip-eso                Skip ESO installation"
+    echo "  -v, --verbose             Enable verbose output"
+    echo "  -f, --force               Skip confirmation prompts"
+    echo "  -h, --help                Show this help message"
     exit 1
-  fi
 }
 
-# Generic function to detect a Kubernetes operator in a specific namespace
-# Usage: is_operator_installed <namespace> <operator_name> <deployment_label>
-function is_operator_installed() {
-  local namespace="$1"
-  local operator_name="$2"
-  local deployment_label="$3"
-
-  echo -e "${YELLOW}Checking for ${operator_name} in namespace '$namespace'...${NC}"
-
-  # Check if namespace exists
-  if ! kubectl get ns "${namespace}" &>/dev/null; then
-    echo -e "${YELLOW}Namespace '${namespace}' does not exist..${NC}"
-    #kubectl create namespace $namespace
-    return 1
-  fi
-
-  # Check for deployment with the specified label
-  if kubectl get deployments -n "${namespace}" -l "$deployment_label" &>/dev/null; then
-    echo -e "${GREEN}${operator_name} deployment found (label: ${deployment_label}) in namespace '${namespace}'${NC}"
-    return 0
-  fi
-
-  return 1
+# Get preferred IP address
+get_preferred_ip() {
+    local ip
+    ip=$(hostname -I | awk '{print $1}')
+    echo "$ip"
 }
 
-is_crd_installed() {
-  local crd_name="$1"
-  if kubectl get crd "$crd_name" &>/dev/null; then
-    echo -e "✅ ${GREEN}${crd_name} CRD is already installed${NC}"
-    return 0
-  else
-    echo -e "${YELLOW}${crd_name} CRD not found${NC}"
-    return 1
-  fi
+# Convert version to v-prefix format
+to_v_prefix() {
+    [[ "$1" == v* ]] && echo "$1" || echo "v$1"
 }
 
-# Function to check if a command exists
+# Check if a command exists
 command_exists() {
-  command -v "$1" >/dev/null 2>&1
+    command -v "$1" >/dev/null 2>&1
 }
 
-# Function to install K3s
+# Check for required dependencies
+check_dependencies() {
+    for cmd in "${REQUIRED_CMDS[@]}"; do
+        if ! command_exists "$cmd"; then
+            MISSING_CMDS+=("$cmd")
+        fi
+    done
+
+    if [ ${#MISSING_CMDS[@]} -gt 0 ]; then
+        echo -e "${RED}Missing dependencies: ${MISSING_CMDS[*]}${NC}"
+        return 1
+    fi
+    return 0
+}
+
+# Install missing dependencies
+install_dependencies() {
+    echo -e "${YELLOW}Installing missing dependencies...${NC}"
+
+    # Package manager detection
+    if command_exists apt-get; then
+        PKG_MANAGER="apt-get"
+    elif command_exists yum; then
+        PKG_MANAGER="yum"
+    else
+        echo -e "${RED}Could not detect package manager${NC}"
+        return 1
+    fi
+
+    for cmd in "${MISSING_CMDS[@]}"; do
+        case "$cmd" in
+            kubectl)
+                if ${COMMAND} == "uninstall"; then
+                    echo -e "${YELLOW}kubectl not found. Aborting uninstall command${NC}"
+                    return 1
+                fi
+                ;;
+            helm)
+                echo -e "${YELLOW}Installing Helm...${NC}"
+                curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+                ;;
+            *)
+                echo -e "${YELLOW}Installing $cmd...${NC}"
+                sudo $PKG_MANAGER install -y "$cmd"
+                ;;
+        esac
+    done
+}
+
+# Check if operator is installed
+is_operator_installed() {
+    local ns="$1"
+    local name="$2"
+    local label="$3"
+
+    if kubectl get deployments -n "$ns" -l "$label" &>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# Check if CRD is installed
+is_crd_installed() {
+    kubectl get crd "$1" >/dev/null 2>&1
+}
+
+# Get newest chart version for app version
+get_chart_version_for_app_version() {
+    local chart_name="$1"
+    local target_app_version="$2"
+
+    helm search repo "$chart_name" --versions --output json | \
+    jq -r --arg av "$target_app_version" '
+        [.[] | select(.app_version == $av) |
+        {version: .version, chunks: (.version | split(".") | map(tonumber))}] |
+        sort_by(.chunks) | reverse | .[0].version // empty'
+}
+
+# Parse command line arguments
+parse_args() {
+    if [[ $# -lt 1 ]]; then
+      usage
+    fi
+
+    local cmd="$1"
+    if [[ "$cmd" != "install" && "$cmd" != "uninstall"  ]]; then
+        echo -e "${RED}Error: Invalid Command '$1' (install/uninstall) is required${NC}"
+        usage
+    fi
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            install|uninstall)
+                COMMAND="$1"
+                shift
+                ;;
+            --k3s-version=*)
+                K3S_VERSION="${1#*=}"
+                shift
+                ;;
+            --k3s-version)
+                K3S_VERSION="$2"
+                shift 2
+                ;;
+            --cluster-name=*)
+                CLUSTER_NAME="${1#*=}"
+                shift
+                ;;
+            --cluster-name)
+                CLUSTER_NAME="$2"
+                shift 2
+                ;;
+            --node-ip=*)
+                NODE_IP="${1#*=}"
+                shift
+                ;;
+            --node-ip)
+                NODE_IP="$2"
+                shift 2
+                ;;
+            --argocd-version=*)
+                ARGO_VERSION="${1#*=}"
+                ARGO_VERSION=$(to_v_prefix "$ARGO_VERSION")
+                shift
+                ;;
+            --argocd-version)
+                ARGO_VERSION=$(to_v_prefix "$2")
+                shift 2
+                ;;
+            --argocd-port=*)
+                ARGO_PORT="${1#*=}"
+                if ! [[ "$ARGO_PORT" =~ ^[0-9]+$ ]]; then
+                    echo -e "${RED}Error: ArgoCD port must be a number${NC}"
+                    usage
+                fi
+                shift
+                ;;
+            --argocd-port)
+                ARGO_PORT="$2"
+                if ! [[ "$ARGO_PORT" =~ ^[0-9]+$ ]]; then
+                    echo -e "${RED}Error: ArgoCD port must be a number${NC}"
+                    usage
+                fi
+                shift 2
+                ;;
+            --argocd-ns=*)
+                ARGO_NS="${1#*=}"
+                shift
+                ;;
+            --argocd-ns)
+                ARGO_NS="$2"
+                shift 2
+                ;;
+            --skip-argocd)
+                SKIP_ARGO=true
+                shift
+                ;;
+            --eso-version=*)
+                ESO_VERSION="${1#*=}"
+                ESO_VERSION=$(to_v_prefix "$ESO_VERSION")
+                shift
+                ;;
+            --eso-version)
+                ESO_VERSION=$(to_v_prefix "$2")
+                shift 2
+                ;;
+            --eso-ns=*)
+                ESO_NS="${1#*=}"
+                shift
+                ;;
+            --eso-ns)
+                ESO_NS="$2"
+                shift 2
+                ;;
+            --eso-name=*)
+                ESO_NAME="${1#*=}"
+                shift
+                ;;
+            --eso-name)
+                ESO_NAME="$2"
+                shift 2
+                ;;
+            --skip-eso)
+                SKIP_ESO=true
+                shift
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -f|--force)
+                FORCE=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                echo -e "${RED}Error: Unknown option $1${NC}"
+                usage
+                ;;
+        esac
+    done
+
+    if [[ -z "$COMMAND" ]]; then
+        echo -e "${RED}Error: Command (install/uninstall) is required${NC}"
+        usage
+    fi
+
+    # Auto-detect node IP if not provided
+    if [[ -z "$NODE_IP" ]]; then
+        NODE_IP=$(get_preferred_ip)
+        if [[ -z "$NODE_IP" ]]; then
+            echo -e "${RED}Error: Could not auto-detect node IP. Please specify with --node-ip${NC}"
+            exit 1
+        fi
+        echo -e "${YELLOW}Using auto-detected node IP: $NODE_IP${NC}"
+    fi
+}
+
+parse_argsx() {
+   if [[ $# -lt 1 ]]; then
+      usage
+    fi
+
+    if [[ "$1" != "install" && "$1" != "uninstall"  ]]; then
+        echo -e "${RED}Error: Invalid Command '$1' (install/uninstall) is required${NC}"
+        usage
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            install|uninstall)
+                COMMAND="$1"
+                shift
+                ;;
+            --k3s-version=*)
+                K3S_VERSION="${1#*=}"
+                shift
+                ;;
+            --cluster-name=*)
+                CLUSTER_NAME="${1#*=}"
+                shift
+                ;;
+            --node-ip=*)
+                NODE_IP="${1#*=}"
+                shift
+                ;;
+            --argocd-version=*)
+                ARGO_VERSION="${1#*=}"
+                ARGO_VERSION=$(to_v_prefix "$ARGO_VERSION")
+                shift
+                ;;
+            --argocd-port=*)
+                ARGO_PORT="${1#*=}"
+                if ! [[ "$ARGO_PORT" =~ ^[0-9]+$ ]]; then
+                    echo -e "${RED}Error: ArgoCD port must be a number${NC}"
+                    usage
+                fi
+                shift
+                ;;
+            --argocd-ns=*)
+                ARGO_NS="${1#*=}"
+                shift
+                ;;
+            --skip-argocd)
+                SKIP_ARGO=true
+                shift
+                ;;
+            --eso-version=*)
+                ESO_VERSION="${1#*=}"
+                ESO_VERSION=$(to_v_prefix "$ESO_VERSION")
+                shift
+                ;;
+            --eso-ns=*)
+                ESO_NS="${1#*=}"
+                shift
+                ;;
+            --eso-name=*)
+                ESO_NAME="${1#*=}"
+                shift
+                ;;
+            --skip-eso)
+                SKIP_ESO=true
+                shift
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -f|--force)
+                FORCE=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                echo -e "${RED}Error: Unknown option $1${NC}"
+                usage
+                ;;
+        esac
+    done
+
+    # Auto-detect node IP if not provided
+    if [[ -z "$NODE_IP" ]]; then
+        NODE_IP=$(get_preferred_ip)
+        if [[ -z "$NODE_IP" ]]; then
+            echo -e "${RED}Error: Could not auto-detect node IP. Please specify with --node-ip${NC}"
+            exit 1
+        fi
+        echo -e "${YELLOW}Using auto-detected node IP: $NODE_IP${NC}"
+    fi
+}
+
+# Print current configuration
+print_config() {
+    echo -e "${BLUE}Current Configuration:${NC}"
+    echo -e "  K3s Version: ${GREEN}$K3S_VERSION${NC}"
+    echo -e "  Cluster Name: ${GREEN}$CLUSTER_NAME${NC}"
+    echo -e "  Node IP: ${GREEN}$NODE_IP${NC}"
+    if ! $SKIP_ARGO; then
+        echo -e "  ArgoCD Version: ${GREEN}$ARGO_VERSION${NC}"
+        echo -e "  ArgoCD Namespace: ${GREEN}$ARGO_NS${NC}"
+        echo -e "  ArgoCD Port: ${GREEN}$ARGO_PORT${NC}"
+    else
+        echo -e "  ArgoCD: ${YELLOW}SKIPPED${NC}"
+    fi
+    if ! $SKIP_ESO; then
+        echo -e "  ESO Version: ${GREEN}$ESO_VERSION${NC}"
+        echo -e "  ESO Namespace: ${GREEN}$ESO_NS${NC}"
+        echo -e "  ESO Name: ${GREEN}$ESO_NAME${NC}"
+    else
+        echo -e "  ESO: ${YELLOW}SKIPPED${NC}"
+    fi
+    echo
+}
+
+# Confirm before proceeding
+confirm_action() {
+    if $FORCE; then
+        return 0
+    fi
+
+    print_config
+    read -rp "Do you want to proceed with ${COMMAND}? [y/N] " confirm
+    if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+        echo -e "${YELLOW}Operation cancelled${NC}"
+        exit 0
+    fi
+}
+
+# --- Installation Functions ---
+
 install_k3s() {
-  if command_exists k3s; then
-    echo -e "${GREEN}K3s is already installed${NC}"
-    return
-  fi
+    echo -e "${GREEN}Installing K3s cluster...${NC}"
 
-  echo -e "${YELLOW}Installing K3s...${NC}"
-  curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=$K3S_VERSION sh -s - \
-    --cluster-init \
-    --node-ip "$NODE_IP" \
-    --cluster-domain "$CLUSTER_NAME".local \
-    --write-kubeconfig-mode 644 \
-    --disable traefik
+    local install_cmd="curl -sfL https://get.k3s.io | "
+    install_cmd+="INSTALL_K3S_VERSION=$K3S_VERSION "
+    install_cmd+="K3S_CLUSTER_NAME=$CLUSTER_NAME "
+    install_cmd+="K3S_NODE_IP=$NODE_IP "
+    install_cmd+="sh -s - --disable traefik --write-kubeconfig-mode 644"
 
-  # Wait for K3s to be ready
-  echo -e "${YELLOW}Waiting for K3s to be ready...${NC}"
-  until kubectl get nodes &>/dev/null; do
-    sleep 2
-  done
+    if $VERBOSE; then
+        echo -e "${YELLOW}Running: $install_cmd${NC}"
+    fi
 
-  # Set up kubectl configuration
-  mkdir -p "$HOME"/.kube
-  sudo cp /etc/rancher/k3s/k3s.yaml "$HOME"/.kube/config
-  sudo chown "$(id -u)":"$(id -g)" "$HOME"/.kube/config
-  sed -i "s/127.0.0.1/$NODE_IP/g" "$HOME"/.kube/config
+    eval "$install_cmd"
 
-  echo -e "${GREEN}K3s installed successfully${NC}"
+    # Wait for K3s to be ready
+    echo -e "${YELLOW}Waiting for K3s to be ready...${NC}"
+    timeout 600 bash -c '
+      until kubectl get nodes >/dev/null 2>&1; do
+        sleep 5
+      done
+    '
+    local k3s_status=$?
+    if [[ $k3s_status -ne 0 ]]; then
+        echo -e "${RED}Error: K3s did not start within the expected time${NC}"
+        echo -e "${YELLOW}Please check the logs for more information and try again${NC}"
+        return 1
+    fi
+
+    # Set up kubectl configuration
+    mkdir -p "$HOME"/.kube
+    sudo cp /etc/rancher/k3s/k3s.yaml "$HOME"/.kube/config
+    sudo chown "$(id -u)":"$(id -g)" "$HOME"/.kube/config
+    sed -i "s/127.0.0.1/$NODE_IP/g" "$HOME"/.kube/config
+
+    echo -e "${GREEN}K3s cluster installed successfully!${NC}"
 }
 
 install_argocd() {
-  if [[ "$SKIP_ARGOCD" == "true" ]]; then
-    echo -e "${YELLOW}Skipping ArgoCD installation...${NC}"
-    return
-  fi
-  # Check if the operator is already installed
-  is_operator_installed "$ARGOCD_NAMESPACE" "ArgoCD" "app.kubernetes.io/name=argocd-server"
-  local is_upgrade=$?
+    if $SKIP_ARGO; then
+        echo -e "${YELLOW}Skipping ArgoCD installation as requested${NC}"
+        return 0
+    fi
 
-  if [[ $is_upgrade -eq 0 ]]; then
-    echo -e "${GREEN}Detected an existing ArgoCD in cluster namespace. Will try upgrade${NC}"
-  fi
-  # Check if ArgoCD CRD is already installed in another cluster
-  if [[ $is_upgrade -ne 0 ]] && is_crd_installed "applications.argoproj.io"; then
-    echo -e "${GREEN}ArgoCD is already installed. Only one instance is allowed per cluster${NC}"
-    return
-  fi
+    echo -e "${GREEN}Installing ArgoCD...${NC}"
 
-  # Determine the type of service to use
-  local argocd_type="LoadBalancer"
-  if [[ "$ARGOCD_PORT" -ge 30000 && "$ARGOCD_PORT" -le 32767 ]]; then
-    echo -e "${GREEN}ArgoCD port is valid and within range for NodePort!. Defaulting to NodePort${NC}"
-    argocd_type="NodePort"
-  fi
+    # Check for existing installation
+    if is_operator_installed "$ARGO_NS" "argocd" "app.kubernetes.io/name=argocd-server"; then
+        echo -e "${YELLOW}ArgoCD is already installed in namespace $ARGO_NS${NC}"
+        if ! $FORCE; then
+            read -rp "Do you want to upgrade? [y/N] " confirm
+            [[ ! "$confirm" =~ ^[yY]$ ]] && return 0
+        fi
+    fi
 
-  # Determine the operation (install or upgrade)
-  if [[ $is_upgrade -eq 0 ]]; then
-    echo -e "${YELLOW}Upgrading ArgoCD to $argocd_type...${NC}"
-  else
-    echo -e "${YELLOW}Installing ArgoCD to $argocd_type...${NC}"
-  fi
-  helm repo add argo https://argoproj.github.io/argo-helm
-  helm repo update
-  local chat_version
-  if ! chat_version=$(get_chart_version_for_app_version "argo/argo-cd" "$ARGOCD_VERSION"); then
-    echo -e "${RED}Error: Unable to find chart version for ArgoCD version $ARGOCD_VERSION${NC}"
-    return
-  fi
+    # Add Helm repo
+    helm repo add argo https://argoproj.github.io/argo-helm
+    helm repo update
 
-  if [[ "$argocd_type" == "NodePort" ]]; then
-    helm upgrade --install "$ARGOCD_NAME" argo/argo-cd \
-      --namespace "$ARGOCD_NAMESPACE" \
-      --version "$chat_version" \
-      --create-namespace \
-      --set server.service.type=$argocd_type \
-      --set server.service.nodePort="$ARGOCD_PORT"
-  else
-    helm upgrade --install "$ARGOCD_NAME" argo/argo-cd \
-      --namespace "$ARGOCD_NAMESPACE" \
-      --version "$chat_version" \
-      --create-namespace \
-      --set server.service.type=$argocd_type \
-      --set server.service.port="$ARGOCD_PORT"
-  fi
+    # Determine service type
+    local service_type="NodePort"
+    if [[ "$ARGO_PORT" -lt 30000 ]] || [[ "$ARGO_PORT" -gt 32767 ]]; then
+        service_type="LoadBalancer"
+        echo -e "${YELLOW}Port $ARGO_PORT is outside NodePort range, using LoadBalancer${NC}"
+    fi
 
-  local installed=$?
-  if [[ "$installed" -ne 0 ]]; then
-    echo -e "${RED}Error installing ArgoCD${NC}"
-    return
-  fi
+    # Get chart version
+    local chart_version
+    chart_version=$(get_chart_version_for_app_version "argo/argo-cd" "$ARGO_VERSION")
+    if [[ -z "$chart_version" ]]; then
+        echo -e "${RED}Error: Could not find chart version for ArgoCD $ARGO_VERSION${NC}"
+        return 1
+    fi
 
-  # Wait for ArgoCD to be ready
-  echo -e "${YELLOW}Waiting for ArgoCD to be ready...${NC}"
-  kubectl wait --for=condition=available deployment/argocd-server -n "$ARGOCD_NAMESPACE" --timeout=300s
+    # Install/Upgrade ArgoCD
+    local install_cmd="helm upgrade --install argocd argo/argo-cd "
+    install_cmd+="--namespace $ARGO_NS "
+    install_cmd+="--create-namespace "
+    install_cmd+="--version $chart_version "
+    install_cmd+="--set server.service.type=$service_type "
 
-  # Get initial admin password
-  ARGOCD_PASSWORD=$(kubectl -n "$ARGOCD_NAMESPACE" get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+    if [[ "$service_type" == "NodePort" ]]; then
+        install_cmd+="--set server.service.nodePort=$ARGO_PORT"
+    else
+        install_cmd+="--set server.service.port=$ARGO_PORT"
+    fi
 
-  echo -e "${GREEN}ArgoCD installed successfully${NC}"
-  echo -e "${YELLOW}ArgoCD Dashboard URL: http://$NODE_IP:$ARGOCD_PORT${NC}"
-  echo -e "${YELLOW}Username: admin${NC}"
-  echo -e "${YELLOW}Password: $ARGOCD_PASSWORD${NC}"
+    if $VERBOSE; then
+        echo -e "${YELLOW}Running: $install_cmd${NC}"
+    fi
+
+    eval "$install_cmd" || {
+        echo -e "${RED}Error installing ArgoCD${NC}"
+        return 1
+    }
+
+    # Wait for ArgoCD
+    echo -e "${YELLOW}Waiting for ArgoCD to be ready...${NC}"
+    kubectl wait --for=condition=available deployment/argocd-server -n "$ARGO_NS" --timeout=300s
+
+    # Get admin password
+    local argocd_password
+    argocd_password=$(kubectl -n "$ARGO_NS" get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+
+    echo -e "${GREEN}ArgoCD installed successfully!${NC}"
+    echo -e "${YELLOW}Dashboard URL: http://$NODE_IP:$ARGO_PORT${NC}"
+    echo -e "${YELLOW}Username: admin${NC}"
+    echo -e "${YELLOW}Password: $argocd_password${NC}"
 }
 
-# Function to install ArgoCD CLI
-install_argocd_cli() {
-  if command_exists argocd; then
-    echo -e "${GREEN}ArgoCD CLI is already installed${NC}"
-    return
-  fi
-
-  echo -e "${YELLOW}Installing ArgoCD CLI...${NC}"
-  curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/download/"$ARGOCD_VERSION"/argocd-linux-amd64
-  sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
-  rm argocd-linux-amd64
-  echo -e "${GREEN}ArgoCD CLI installed successfully${NC}"
-}
-
-# Function to install External Secrets Operator
 install_eso() {
-  if [[ ${SKIP_ESO} == "true" ]]; then
-    echo -e "${YELLOW}Skipping External Secrets Operator installation...${NC}"
-    return
-  fi
+    if $SKIP_ESO; then
+        echo -e "${YELLOW}Skipping ESO installation as requested${NC}"
+        return 0
+    fi
 
-  # Check if the operator is already installed
-  local is_upgrade
-  is_upgrade=$(is_operator_installed "$ESO_NAMESPACE" "ESO" "app.kubernetes.io/name=${ESO_NAME}")
+    echo -e "${GREEN}Installing External Secrets Operator...${NC}"
 
-  if [[ "$is_upgrade" -eq 0 ]]; then
-    echo -e "${GREEN}Detected an existing ESO in cluster namespace. Will try an upgrade${NC}"
-  fi
+    # Check for existing installation
+    if is_operator_installed "$ESO_NS" "$ESO_NAME" "app.kubernetes.io/name=$ESO_NAME"; then
+        echo -e "${YELLOW}ESO is already installed in namespace $ESO_NS${NC}"
+        if ! $FORCE; then
+            read -rp "Do you want to upgrade? [y/N] " confirm
+            [[ ! "$confirm" =~ ^[yY]$ ]] && return 0
+        fi
+    fi
 
-  # Check if CRD is already installed
-  # local installCRD = is_crd_installed "externalsecrets.external-secrets.io" && false || true
-  if [[ "$is_upgrade" -ne 0 ]] && is_crd_installed "externalsecrets.external-secrets.io"; then
-    echo -e "${GREEN}External Secrets Operator CRD is already installed. Only one instance is allowed per cluster ${NC}"
-    return
-  fi
+    # Add Helm repo
+    helm repo add external-secrets https://charts.external-secrets.io
+    helm repo update
 
-  echo -e "${YELLOW}Installing External Secrets Operator...${NC}"
+    # Install/Upgrade ESO
+    local install_cmd="helm upgrade --install $ESO_NAME external-secrets/external-secrets "
+    install_cmd+="--namespace $ESO_NS "
+    install_cmd+="--create-namespace "
+    install_cmd+="--version $ESO_VERSION "
+    install_cmd+="--set installCRDs=true"
 
-  # Add the External Secrets Helm repository
-  helm repo add external-secrets https://charts.external-secrets.io
-  helm repo update
+    if $VERBOSE; then
+        echo -e "${YELLOW}Running: $install_cmd${NC}"
+    fi
 
-  # Check if the chart version is available
-  local chat_version
-  if ! chat_version=$(get_chart_version_for_app_version "external-secrets/external-secrets" "$ESO_VERSION"); then
-    echo -e "${RED}Error: Unable to find chart version for ESO version $ESO_VERSION${NC}"
-    return
-  fi
-  # Install the operator
-  helm upgrade --install "$ESO_NAME" \
-    external-secrets/external-secrets \
-    -n "$ESO_NAMESPACE" \
-    --create-namespace \
-    --version "$chat_version" \
-    --set installCRDs=true
+    eval "$install_cmd" || {
+        echo -e "${RED}Error installing ESO${NC}"
+        return 1
+    }
 
-  # Wait for the operator to be ready
-  echo -e "${YELLOW}Waiting for External Secrets Operator to be ready...${NC}"
-  kubectl wait --for=condition=ready pod -l app.kubernetes.io/name="$ESO_NAME" -n "$ESO_NAMESPACE" --timeout=300s
+    # Wait for ESO
+    echo -e "${YELLOW}Waiting for ESO to be ready...${NC}"
+    kubectl wait --for=condition=available deployment/$ESO_NAME -n "$ESO_NS" --timeout=300s
 
-  echo -e "${GREEN}External Secrets Operator installed successfully${NC}"
+    echo -e "${GREEN}External Secrets Operator installed successfully!${NC}"
 }
 
-# Function to uninstall K3s and ArgoCD
-uninstall_all() {
-  echo -e "${YELLOW}Starting uninstallation process...${NC}"
+# --- Uninstallation Functions ---
 
-  # Uninstall ArgoCD
-  if [[ "$SKIP_ARGOCD" == "false" ]]; then
-    echo -e "${YELLOW}Uninstalling ArgoCD...${NC}"
-    if kubectl get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
-      helm uninstall "$ARGOCD_NAME" -n "$ARGOCD_NAMESPACE"
-    else
-      echo -e "${YELLOW}Namespace $ARGOCD_NAMESPACE does not exist. ArgoCD uninstallation.${NC}"
-    fi
-  fi
-
-  # Remove ArgoCD CLI
-  if command_exists argocd; then
-    echo -e "${YELLOW}Removing ArgoCD CLI...${NC}"
-    sudo rm -f /usr/local/bin/argocd
-  fi
-
-  # Uninstall External Secrets Operator
-  if [[ "$SKIP_ESO" == "false" ]]; then
-    echo -e "${YELLOW}Uninstalling External Secrets Operator...${NC}"
-    if kubectl get namespace "$ESO_NAMESPACE" &>/dev/null; then
-      helm uninstall "$ESO_NAME" -n "$ESO_NAMESPACE"
-    else
-      echo -e "${YELLOW}Namespace $ESO_NAMESPACE does not exist. Skipping External Secrets Operator uninstallation.${NC}"
-    fi
-  fi
-
-  # Uninstall K3s
-  if command_exists k3s; then
+uninstall_k3s() {
     echo -e "${YELLOW}Uninstalling K3s...${NC}"
-    /usr/local/bin/k3s-uninstall.sh
-  fi
+    if command_exists k3s-uninstall.sh; then
+        /usr/local/bin/k3s-uninstall.sh
+    else
+        echo -e "${YELLOW}K3s uninstall script not found${NC}"
+    fi
+    echo -e "${GREEN}K3s uninstalled successfully!${NC}"
 }
 
-check_dependencies() {
-  echo -e "${YELLOW}Checking dependencies...${NC}"
-  # Check if kubectl is installed
-  if ! command_exists kubectl; then
-    echo -e "${RED}kubectl is not installed${NC}"
-    return 1
-  fi
+uninstall_argocd() {
+    if $SKIP_ARGO; then
+        return 0
+    fi
 
-  # Check if Helm is installed
-  if ! command_exists helm; then
-    echo -e "${RED}Helm is not installed${NC}"
+    echo -e "${YELLOW}Uninstalling ArgoCD...${NC}"
+    if helm list -n "$ARGO_NS" | grep -q argocd; then
+        helm uninstall argocd -n "$ARGO_NS"
+        kubectl delete namespace "$ARGO_NS" --ignore-not-found=true
+        echo -e "${GREEN}ArgoCD uninstalled successfully!${NC}"
+    else
+        echo -e "${YELLOW}ArgoCD not found in namespace $ARGO_NS${NC}"
+    fi
 
-  fi
-}
-# Function to install necessary dependencies
-# This function checks for required tools like Helm and installs them if they are not already present.
-install_dependencies() {
-  echo -e "${YELLOW}Checking dependencies...${NC}"
-
-  # Check if curl is installed else install it
-  if ! command_exists curl; then
-    echo -e "${RED}curl is not installed. Installing...${NC}"
-    sudo apt-get install -y curl
-  else
-    echo -e "${GREEN}curl is already installed${NC}"
-  fi
-  # Check if jq is installed else install it
-  if ! command_exists jq; then
-    echo -e "${RED}jq is not installed. Installing...${NC}"
-    sudo apt-get install -y jq
-  else
-    echo -e "${GREEN}jq is already installed${NC}"
-  fi
-
-  # Check if Helm is required and not installed, then install it
-  # Helm is needed if ArgoCD or External Secrets Operator installation is not skipped
-  if [[ "$SKIP_ARGOCD" == "false" || "$SKIP_ESO" == "false" ]] && ! command_exists helm; then
-    echo -e "${YELLOW}Installing Helm...${NC}"
-    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-    echo -e "${GREEN}Helm installed successfully${NC}"
-  else
-    # If Helm is already installed, notify the user
-    echo -e "${GREEN}Helm is already installed${NC}"
-  fi
+    # Remove CLI if exists
+    if command_exists argocd; then
+        echo -e "${YELLOW}Removing ArgoCD CLI...${NC}"
+        sudo rm -f /usr/local/bin/argocd
+    fi
 }
 
-# Function to verify installation
+uninstall_eso() {
+    if $SKIP_ESO; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}Uninstalling ESO...${NC}"
+    if helm list -n "$ESO_NS" | grep -q "$ESO_NAME"; then
+        helm uninstall "$ESO_NAME" -n "$ESO_NS"
+        kubectl delete namespace "$ESO_NS" --ignore-not-found=true
+        echo -e "${GREEN}ESO uninstalled successfully!${NC}"
+    else
+        echo -e "${YELLOW}ESO not found in namespace $ESO_NS${NC}"
+    fi
+}
+
+# --- Verification Functions ---
+
 verify_installation() {
-  echo -e "${YELLOW}Verifying installation...${NC}"
+    echo -e "${GREEN}Verifying installation...${NC}"
+    local success=true
 
-  # Check if K3s is running
-  if ! command_exists k3s; then
-    echo -e "${RED}K3s is not installed${NC}"
-    return 1
-  fi
+    # Verify K3s
+    if ! kubectl get nodes >/dev/null 2>&1; then
+        echo -e "${RED}Error: K3s cluster is not running${NC}"
+        success=false
+    else
+        echo -e "${GREEN}✓ K3s cluster is running${NC}"
+    fi
 
-  # Check if kubectl is configured
-  if ! kubectl cluster-info &>/dev/null; then
-    echo -e "${RED}kubectl is not configured correctly${NC}"
-    return 1
-  fi
+    # Verify ArgoCD if installed
+    if ! $SKIP_ARGO; then
+        if ! is_operator_installed "$ARGO_NS" "argocd" "app.kubernetes.io/name=argocd-server"; then
+            echo -e "${RED}Error: ArgoCD is not installed${NC}"
+            success=false
+        elif ! is_crd_installed "applications.argoproj.io"; then
+            echo -e "${RED}Error: ArgoCD CRDs are not installed${NC}"
+            success=false
+        else
+            echo -e "${GREEN}✓ ArgoCD is installed and running${NC}"
+        fi
+    fi
 
-  # Check if ArgoCD CRD is installed
-  if ! kubectl get crd applications.argoproj.io &>/dev/null; then
-    echo -e "${RED}ArgoCD CRD is not installed${NC}"
-    return 1
-  fi
+    # Verify ESO if installed
+    if ! $SKIP_ESO; then
+        if ! is_operator_installed "$ESO_NS" "$ESO_NAME" "app.kubernetes.io/name=$ESO_NAME"; then
+            echo -e "${RED}Error: ESO is not installed${NC}"
+            success=false
+        elif ! is_crd_installed "externalsecrets.external-secrets.io"; then
+            echo -e "${RED}Error: ESO CRDs are not installed${NC}"
+            success=false
+        else
+            echo -e "${GREEN}✓ ESO is installed and running${NC}"
+        fi
+    fi
 
-  # Check if External Secrets Operator is running
-  # Check if ESO CRD is installed
-  if ! kubectl get crd externalsecrets.external-secrets.io &>/dev/null; then
-    echo -e "${RED}External Secrets Operator CRD is not installed${NC}"
-    return 1
-  fi
-  # output values
-  echo -e "${YELLOW}ArgoCD Dashboard URL: http://$NODE_IP:$ARGOCD_PORT${NC}"
-
-  echo -e "${GREEN}All components are installed and running successfully${NC}"
+    if $success; then
+        echo -e "${GREEN}All components verified successfully!${NC}"
+        return 0
+    else
+        echo -e "${RED}Verification failed${NC}"
+        return 1
+    fi
 }
 
-# Main function
+# --- Main Function ---
+
 main() {
-  parse_args "$@"
-  confirm
+    parse_args "$@"
 
-  case "$OPERATION" in
-  install)
-    install_dependencies
-    install_k3s
-    install_argocd
-    install_argocd_cli
-    install_eso
-    verify_installation
-    ;;
-  uninstall)
-    check_dependencies || exit 1
-    uninstall_all
-    ;;
-  *)
-    echo -e "${RED}Invalid operation${NC}"
-    exit 1
-    ;;
-  esac
+    # Check dependencies
+    if ! check_dependencies; then
+        if ! $FORCE; then
+            read -rp "Attempt to install missing dependencies? [y/N] " confirm
+            [[ "$confirm" =~ ^[yY]$ ]] || exit 1
+        fi
+        install_dependencies || exit 1
+    fi
+
+    confirm_action
+
+    case "$COMMAND" in
+        install)
+            install_k3s || exit 1
+            install_argocd
+            install_eso
+            verify_installation
+            ;;
+        uninstall)
+            uninstall_argocd
+            uninstall_eso
+            uninstall_k3s
+            ;;
+        *)
+            echo -e "${RED}Error: Unknown command $COMMAND${NC}"
+            usage
+            ;;
+    esac
 }
 
+# Execute only if run directly
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  main "$@"
+    main "$@"
 fi
+#
+#./k3s.sh install \
+#  --k3s-version=v1.32.3+k3s1 \
+#  --cluster-name=development \
+#  --node-ip=<NODE_IP> \
+#  --argocd-version=v2.14.10 \
+#  --argocd-port=8080 \
+#  --argocd-ns=argocd \
+#  --eso-version=0.16.1 \
+#  --eso-ns=external-secrets \
+#  --eso-name=external-secrets \
+#  -v \
+#  -f

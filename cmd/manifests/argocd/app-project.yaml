@@ -1,0 +1,17 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ecommerce-project
+  namespace: argocd
+spec:
+  sourceRepos:
+    - "https://github.com/deelaa-marketplace/ecommerce-k8s-gitops.git"
+  destinations:
+    - namespace: "ecommerce-dev"
+      server: "https://kubernetes.default.svc"
+#    - namespace: "ecommerce-prod"
+#      server: "https://kubernetes.default.svc"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+

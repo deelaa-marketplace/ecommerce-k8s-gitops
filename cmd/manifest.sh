@@ -1,403 +1,590 @@
 #!/bin/bash
 
-set -eo pipefail
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-# Default variables
-DEFAULT_ESO_VERSION="0.16.1"
+# Default configurations
 DEFAULT_NAMESPACE="default"
-DEFAULT_AWS_REGION="us-east-1"
-DEFAULT_SKIP_PARAM_STORE="false"
-DEFAULT_SKIP_ECR="false"
-DEFAULT_REFRESH_INTERVAL="12h"
-
+DEFAULT_REGION="us-east-1"
+DEFAULT_MANIFESTS_DIR_NAME="manifests"
+DEFAULT_OUTPUT_DIR_NAME="manifests-output"
+DEFAULT_WORKING_DIR="."
 
 # Initialize variables
-NAME_PREFIX=""
-ESO_VERSION=""
-NAMESPACE=""
-AWS_REGION=""
-AWS_ACCESS_KEY_ID=""
-AWS_SECRET_ACCESS_KEY=""
-REFRESH_INTERVAL=""
 ACTION=""
-SKIP_PARAM_STORE=""
-SKIP_ECR=""
-INSTALL_ESO=""
-OUTPUT_DIR=""
+NAMESPACE=$DEFAULT_NAMESPACE
+REGION=$DEFAULT_REGION
+AWS_ACCESS_KEY="${AWS_ACCESS_KEY_ID:-}"
+AWS_SECRET_KEY="${AWS_SECRET_ACCESS_KEY:-}"
+SSH_PRIVATE_KEY_FILE=""
+SSH_PRIVATE_KEY="${SSH_PRIVATE_KEY:-}"
+WORKING_DIR="$DEFAULT_WORKING_DIR"
+MANIFESTS_DIR="${MANIFESTS_DIR:-$DEFAULT_MANIFESTS_DIR_NAME}"
+OUTPUT_DIR="${OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR_NAME}"
+FORCE=false
+VERBOSE=false
+DRY_RUN=false
+OUTPUT=false
 
-# Usage help
+
+# --- Helper Functions ---
+
+# Print usage information
 usage() {
-    echo "Usage: $0 <install|uninstall> [options]"
-    echo ""
-    echo "Options:"
-    echo "  -p,  --name-prefix          Unique name prefix for all resources (default: namespace)"
-    echo "  -e,  --eso-version          External Secrets Operator version (default: $DEFAULT_ESO_VERSION)"
-    echo "  -n,  --namespace            Kubernetes namespace (default: $DEFAULT_NAMESPACE)"
-    echo "  -r,  --region               AWS region (default: $DEFAULT_AWS_REGION)"
-    echo "  -a,  --access-key           AWS Access Key ID (default: from env AWS_ACCESS_KEY_ID)"
-    echo "  -s,  --secret-key           AWS Secret Access Key (default: from env AWS_SECRET_ACCESS_KEY)"
-    echo "  -xp, --skip-param-store     Skip Parameter Store secret creation (default: false)"
-    echo "  -xe, --skip-ecr             Skip ECR secret creation (default: false)"
-    echo "  -h,  --help                 Show this help message"
-    exit 1
+  echo -e "${BLUE}Usage: $0 <install|uninstall> [OPTIONS]${NC}"
+  echo
+  echo -e "${BLUE}Options:${NC}"
+  echo "  -p, --name-prefix PREFIX   Unique name prefix for resources (default: $DEFAULT_NAMESPACE)"
+  echo "  -n, --namespace NS         Kubernetes namespace (default: $DEFAULT_NAMESPACE)"
+  echo "  -r, --region REGION        AWS region (default: $DEFAULT_REGION)"
+  echo "  -a, --access-key KEY       AWS Access Key ID"
+  echo "  -s, --secret-key KEY       AWS Secret Access Key"
+  echo "  -k, --ssh-key-file FILE    Path to SSH private key file"
+  echo "  -o, --output               Save processed manifests to output directory"
+  echo "  -w, --working-dir DIR      Working directory (default: $WORKING_DIR)"
+  echo "  -d, --dry-run              Show what would be done without making changes"
+  echo "  -f, --force                Skip confirmation prompts"
+  echo "  -v, --verbose              Enable verbose output"
+  echo "  -h, --help                 Show this help message"
+  echo
+  echo -e "${BLUE}Environment Variables:${NC}"
+  echo "  AWS_ACCESS_KEY_ID         AWS Access Key ID (default: $AWS_ACCESS_KEY)"
+  echo "  AWS_SECRET_ACCESS_KEY     AWS Secret Access Key (default: $AWS_SECRET_KEY)"
+  echo "  SSH_PRIVATE_KEY           SSH private key (default: $SSH_PRIVATE_KEY)"
+  exit 1
 }
 
-# Check dependencies
+# Check for required dependencies
 check_dependencies() {
-    local deps=("kubectl" "envsubst")
-    local missing=()
+  local missing=()
 
-    for dep in "${deps[@]}"; do
-        if ! command -v "$dep" &>/dev/null; then
-            missing+=("$dep")
-        fi
-    done
-
-    if [ ${#missing[@]} -gt 0 ]; then
-        echo "Missing dependencies: ${missing[*]}"
-
-        # Install envsubst if missing (usually comes with gettext package)
-        if [[ " ${missing[*]} " =~ " envsubst " ]]; then
-            echo "Attempting to install envsubst..."
-            if command -v apt-get &>/dev/null; then
-                sudo apt-get update && sudo apt-get install -y gettext-base
-            elif command -v yum &>/dev/null; then
-                sudo yum install -y gettext
-            elif command -v brew &>/dev/null; then
-                brew install gettext
-            else
-                echo "Could not automatically install envsubst. Please install it manually."
-                exit 1
-            fi
-
-            # Verify installation
-            if ! command -v envsubst &>/dev/null; then
-                echo "envsubst installation failed. Please install it manually."
-                exit 1
-            fi
-            echo "envsubst installed successfully."
-        fi
-
-        # After attempted installations, check again
-        missing=()
-        for dep in "${deps[@]}"; do
-            if ! command -v "$dep" &>/dev/null; then
-                missing+=("$dep")
-            fi
-        done
-
-        if [ ${#missing[@]} -gt 0 ]; then
-            echo "Still missing dependencies: ${missing[*]}"
-            echo "Please install them before running this script."
-            exit 1
-        fi
+  for cmd in kubectl envsubst; do
+    if ! command -v "$cmd" &>/dev/null; then
+      missing+=("$cmd")
     fi
-}
+  done
 
-# Install ESO
-install_eso() {
-    if [ "$INSTALL_ESO" = "false" ]; then
-        echo "Skipping ESO installation as it's not required."
-        return 0
-    fi
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo -e "${RED}Error: Missing required dependencies: ${missing[*]}${NC}"
 
-    echo "Installing External Secrets Operator version $ESO_VERSION..."
-    kubectl apply -f https://raw.githubusercontent.com/external-secrets/external-secrets/v${ESO_VERSION}/deploy/crds/bundle.yaml || {
-        echo "Failed to apply ESO CRDs"
+    # Try to install envsubst if missing
+    if [[ " ${missing[*]} " =~ " envsubst " ]]; then
+      echo -e "${YELLOW}Attempting to install envsubst...${NC}"
+      if command -v apt-get &>/dev/null; then
+        sudo apt-get install -y gettext-base
+      elif command -v yum &>/dev/null; then
+        sudo yum install -y gettext
+      else
+        echo -e "${RED}Could not automatically install envsubst. Please install it manually.${NC}"
         return 1
-    }
-    kubectl apply -f https://raw.githubusercontent.com/external-secrets/external-secrets/v${ESO_VERSION}/deploy/bundle.yaml || {
-        echo "Failed to apply ESO bundle"
+      fi
+
+      # Verify installation
+      if ! command -v envsubst &>/dev/null; then
+        echo -e "${RED}Failed to install envsubst${NC}"
         return 1
-    }
-
-    echo "Waiting for ESO pods to be ready..."
-    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=external-secrets -n external-secrets --timeout=300s
+      fi
+      echo -e "${GREEN}envsubst installed successfully${NC}"
+    else
+      return 1
+    fi
+  fi
 }
 
-# Uninstall ESO
-uninstall_eso() {
-    echo "Uninstalling External Secrets Operator..."
-    kubectl delete -f https://raw.githubusercontent.com/external-secrets/external-secrets/v${ESO_VERSION}/deploy/bundle.yaml --ignore-not-found
-    kubectl delete -f https://raw.githubusercontent.com/external-secrets/external-secrets/v${ESO_VERSION}/deploy/crds/bundle.yaml --ignore-not-found
-}
-
-# Process template file
-process_template() {
-    local template_file=$1
-
-    # Create output directory if it doesn't exist
-    if [ ! -d "$OUTPUT_DIR" ]; then
-        mkdir -p "$OUTPUT_DIR"
-    fi
-
-    local output_file="${OUTPUT_DIR}/$(basename ${template_file%.template.yaml}).yaml"
-
-    # Check file exists
-    if [ ! -f "$template_file" ]; then
-        echo "Template file $template_file not found!"
-        return 1
-    fi
-
-    # Interpolate variables
-    echo "Processing template $template_file..."
-    envsubst <"$template_file" >"$output_file"
-    if [ $? -ne 0 ]; then
-        echo "Failed to process template $template_file"
-        return 1
-    fi
-    echo "Generated manifest: $output_file"
-
-    # Dry-run validation
-    if ! kubectl apply -f "$output_file" --dry-run=client; then
-        echo "Dry-run validation failed for $output_file"
-        return 1
-    fi
-
-    # Actual application
-    if [ "$ACTION" = "install" ]; then
-        echo "Applying manifest: $output_file"
-        kubectl apply -f "$output_file"
-    elif [ "$ACTION" = "uninstall" ]; then
-        echo "Deleting resources from: $output_file"
-        kubectl delete -f "$output_file" --ignore-not-found
-    fi
-}
-
-# Create AWS credentials secret
-create_aws_credentials_secret() {
-    local secret_name="${AWS_SECRET_NAME}"
-
-    if [ "$ACTION" = "install" ]; then
-        echo "Creating AWS credentials secret..."
-        kubectl create secret generic "$secret_name" \
-            --from-literal=access-key="$AWS_ACCESS_KEY_ID" \
-            --from-literal=secret-key="$AWS_SECRET_ACCESS_KEY" \
-            -n "$NAMESPACE" \
-            --dry-run=client -o yaml | kubectl apply -f -
-    elif [ "$ACTION" = "uninstall" ]; then
-        echo "Deleting AWS credentials secret..."
-        kubectl delete secret "$secret_name" -n "$NAMESPACE" --ignore-not-found
-    fi
-}
-
-# Function to create AWS credentials secret
-aws_credentials_secret() {
-    if [[ "$SKIP_AWS_SECRET" == "true" ]]; then
-        echo "Skipping AWS credentials secret action."
-        return
-    fi
-
-    local templates=(
-        "./manifests/aws-credentials-secret.template.yaml"
-    )
-    export NAME_PREFIX NAMESPACE AWS_REGION AWS_SECRET_NAME
-    export AWS_ACCESS_KEY_B64=$(echo -n "$AWS_ACCESS_KEY_ID" | base64 -w0)
-    export AWS_SECRET_KEY_B64=$(echo -n "$AWS_SECRET_ACCESS_KEY" | base64 -w0)
-
-    for template in "${templates[@]}"; do
-        process_template "$template" || exit 1
-    done
-    echo "Created/updated secret: ${AWS_SECRET_NAME}"
-
-}
-
-# Create/delete Parameter Store external secret
-parameter_store_external_secret() {
-    if [ "$SKIP_PARAM_STORE" = "true" ]; then
-        echo "Skipping Parameter Store external secret action as requested."
-        return 0
-    fi
-
-    local template_file="./manifests/param-store-secret.template.yaml"
-
-    export NAME_PREFIX NAMESPACE REFRESH_INTERVAL AWS_REGION AWS_SECRET_NAME
-    export PARAM_STORE_SECRET_NAME="${NAME_PREFIX}-param-store-secret"
-    export PARAM_STORE_SECRET_STORE_NAME="${NAME_PREFIX}-aws-parameter-store"
-
-    process_template "$template_file" || exit 1
-    echo "Created/updated secret: ${PARAM_STORE_SECRET_NAME}"
-    echo "Created/updated secret store: ${PARAM_STORE_SECRET_STORE_NAME}"
-}
-
-# Create/delete ECR external secret
-ecr_external_secret() {
-    if [ "$SKIP_ECR" = "true" ]; then
-        echo "Skipping ECR external secret creation as requested."
-        return 0
-    fi
-
-    local template_file="./manifests/ecr-secret.template.yaml"
-
-    export NAME_PREFIX NAMESPACE REFRESH_INTERVAL AWS_REGION AWS_SECRET_NAME
-    export ECR_SECRET_NAME="${NAME_PREFIX}-ecr-secret"
-    export ECR_SECRET_STORE_NAME="${NAME_PREFIX}-aws-ecr"
-    export ECR_AUTH_TOKEN_NAME="${NAME_PREFIX}-aws-ecr"
-
-    process_template "$template_file" || exit 1
-    echo "ECR_SECRET_NAME: ${ECR_SECRET_NAME}"
-    echo "ECR_AUTH_TOKEN_NAME: ${ECR_AUTH_TOKEN_NAME}"
-}
-
-# Function to create namespace if needed
+# Create namespace if it doesn't exist
 create_namespace() {
-    if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
-        echo "Creating namespace ${NAMESPACE}..."
-        kubectl create namespace "$NAMESPACE"
-    fi
+  if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
+    echo -e "${YELLOW}Creating namespace $NAMESPACE...${NC}"
+    kubectl create namespace "$NAMESPACE" || {
+      echo -e "${RED}Failed to create namespace $NAMESPACE${NC}"
+      return 1
+    }
+    echo -e "${GREEN}Namespace $NAMESPACE created successfully${NC}"
+  else
+    echo -e "${YELLOW}Namespace $NAMESPACE already exists${NC}"
+  fi
 }
 
-# Print configuration
-print_config() {
-    echo ""
-    echo "Current configuration:"
-    echo "======================"
-    echo "Action:                $ACTION"
-    echo "Name prefix:           $NAME_PREFIX"
-    echo "ESO version:           $ESO_VERSION"
-    echo "Namespace:             $NAMESPACE"
-    echo "AWS Region:            $AWS_REGION"
-    echo "Install ESO:           $INSTALL_ESO"
-    echo "Skip Parameter Store:  $SKIP_PARAM_STORE"
-    echo "Skip ECR:              $SKIP_ECR"
-    echo "AWS Secret Name:       $AWS_SECRET_NAME"
-    echo "AWS Access Key ID:     ${AWS_ACCESS_KEY_ID:0:4}... (truncated)"
-    echo "AWS Secret Access Key: ${AWS_SECRET_ACCESS_KEY:0:4}... (truncated)"
-    if [ -n "$OUTPUT_DIR" ]; then
-        echo "Output Directory:      $OUTPUT_DIR"
+# Process Kubernetes manifest template
+process_template() {
+  local template_file="$1"
+  local action="$2"
+  local processed_manifest
+
+  # Export variables for envsubst
+  export NAMESPACE REGION AWS_ACCESS_KEY AWS_SECRET_KEY SSH_PRIVATE_KEY
+  #    local AWS_ACCESS_KEY_B64
+  #    AWS_ACCESS_KEY_B64=$(echo -n "$AWS_ACCESS_KEY" | base64 -w0)
+  #    local AWS_SECRET_KEY_B64
+  #    AWS_SECRET_KEY_B64=$(echo -n "$AWS_SECRET_KEY" | base64 -w0)
+  #    local SSH_PRIVATE_KEY_B64
+  #    SSH_PRIVATE_KEY_B64=$(echo -n "$SSH_PRIVATE_KEY" | base64 -w0)
+  #    export AWS_ACCESS_KEY_B64 AWS_SECRET_KEY_B64 SSH_PRIVATE_KEY_B64
+  # Check if AWS_ACCESS_KEY_B64
+  if [[ -n "$AWS_ACCESS_KEY" ]]; then
+    local AWS_ACCESS_KEY_B64
+    AWS_ACCESS_KEY_B64=$(echo -n "$AWS_ACCESS_KEY" | base64 -w0)
+    export AWS_ACCESS_KEY_B64
+  fi
+  if [[ -n "$AWS_SECRET_KEY" ]]; then
+    local AWS_SECRET_KEY_B64
+    AWS_SECRET_KEY_B64=$(echo -n "$AWS_SECRET_KEY" | base64 -w0)
+    export AWS_SECRET_KEY_B64
+  fi
+  if [[ -n "$SSH_PRIVATE_KEY" ]]; then
+    local SSH_PRIVATE_KEY_B64
+    SSH_PRIVATE_KEY_B64=$(echo -n "$SSH_PRIVATE_KEY" | base64 -w0)
+    export SSH_PRIVATE_KEY_B64
+  fi
+  echo -e "${YELLOW}Processing template: $template_file${NC}"
+
+  # Substitute environment variables
+  processed_manifest=$(envsubst <"$template_file") || {
+    echo -e "${RED}Failed to process template $template_file${NC}"
+    return 1
+  }
+
+  if $OUTPUT; then
+    local output_dir
+    output_dir="${OUTPUT_DIR}/${NAMESPACE}/${action}-${DRY_RUN:+-dry-run}/"
+    mkdir -p "$output_dir"
+    if [[ ! -d "$output_dir" ]]; then
+      echo -e "${RED}Output directory $output_dir does not exist and could not be created${NC}"
+      return 1
     fi
-    echo ""
-}
 
-# Prompt for confirmation
-confirm() {
-    print_config
+    local output_file
+    output_file="${output_dir}/$(basename "${template_file%.*}").out.${template_file##*.}"
+    echo "$processed_manifest" >"$output_file"
+    echo -e "${GREEN}Saved processed manifest to: $output_file${NC}"
+  fi
 
-    read -p "Do you want to proceed with these settings? (y/n) " -n 1 -r
+  if $VERBOSE; then
+    echo -e "${BLUE}Processed manifest:${NC}"
+    echo "$processed_manifest"
     echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Aborting..."
-        exit 0
+  fi
+
+  if $DRY_RUN; then
+    echo -e "${YELLOW}Dry run: Would ${action} resources from $template_file${NC}"
+    return 0
+  fi
+
+  case "$action" in
+  install)
+    # Dry-run validation (even when not in full dry-run mode)
+    if ! echo "$processed_manifest" | kubectl apply --dry-run=client -f - &>/dev/null; then
+      echo -e "${RED}Manifest validation failed for $template_file${NC}"
+      return 1
     fi
+
+    # Apply manifest
+    echo "$processed_manifest" | kubectl apply -f - || {
+      echo -e "${RED}Failed to apply $template_file${NC}"
+      return 1
+    }
+    echo -e "${GREEN}Successfully applied $template_file${NC}"
+    ;;
+  uninstall)
+    # Delete resources
+    echo "$processed_manifest" | kubectl delete -f - --ignore-not-found || {
+      echo -e "${RED}Failed to delete resources from $template_file${NC}"
+      return 1
+    }
+    echo -e "${GREEN}Successfully deleted resources from $template_file${NC}"
+    ;;
+  *)
+    echo -e "${RED}Invalid action: $action${NC}"
+    return 1
+    ;;
+  esac
 }
 
-# Parse arguments
+# Process all manifests in the manifests directory
+process_manifests() {
+  local action="$1"
+
+  local manifest_dir="${MANIFESTS_DIR}/${NAMESPACE}"
+  if [[ ! -d "$manifest_dir" ]]; then
+    echo -e "${YELLOW}No manifests directory found at $manifest_dir${NC}"
+    return 0
+  fi
+
+  echo -e "${YELLOW}Processing manifests in $manifest_dir...${NC}"
+
+  process_manifests_directory "$manifest_dir" "$action" || {
+    echo -e "${RED}Error processing manifests in $manifest_dir${NC}"
+    return 1
+  }
+}
+
+process_manifests_directory() {
+  local dir="$1"
+  local  action="$2"
+  local subdirectories=()
+
+  # Process all files in the current directory (sorted alphabetically)
+  while read -r file; do
+    if [[ -d "$file" ]]; then
+      subdirectories+=("$file")
+      continue
+    fi
+#    if [[ "${file%.*}" == *".out"* ]]; then
+#      echo "Skipping output file: $file"
+#      continue
+#    fi
+     echo "${YELLOW}Processing $file...${NC}"
+    # Process the manifest template
+    process_template "$file" "$action" || {
+      echo -e "${RED}Error processing $file${NC}"
+      return 1
+    }
+  done < <(find "$dir" -maxdepth 1 \( -type f -name "*.yaml" -o -name "*.yml" -o -type d  ! -path "$dir" \) | sort)
+
+  # Recursively process all subdirectories
+  for subdir in "${subdirectories[@]}"; do
+    echo "${YELLOW}Entering directory: $subdir${NC}"
+    process_manifests_directory "$subdir" "$action" || {
+      echo -e "${RED}Error processing manifests in $subdir${NC}"
+      return 1
+    }
+  done
+}
+
+# Read SSH private key file
+read_ssh_private_key() {
+  if [[ -n "$SSH_PRIVATE_KEY_FILE" ]]; then
+    if [[ ! -f "$SSH_PRIVATE_KEY_FILE" ]]; then
+      echo -e "${RED}SSH private key file not found: $SSH_PRIVATE_KEY_FILE${NC}"
+      return 1
+    fi
+    SSH_PRIVATE_KEY=$(<"$SSH_PRIVATE_KEY_FILE")
+    if [[ -z "$SSH_PRIVATE_KEY" ]]; then
+      echo -e "${RED}Failed to read SSH private key from $SSH_PRIVATE_KEY_FILE${NC}"
+      return 1
+    fi
+    echo -e "${GREEN}Successfully read SSH private key from $SSH_PRIVATE_KEY_FILE${NC}"
+  fi
+}
+
+# Print current configuration
+print_config() {
+  echo -e "${BLUE}Current Configuration:${NC}"
+  echo -e "  Action:                ${GREEN}$ACTION${NC}"
+  echo -e "  Namespace:             ${GREEN}$NAMESPACE${NC}"
+  echo -e "  AWS Region:            ${GREEN}$REGION${NC}"
+  echo -e "  AWS Access Key:        ${GREEN}${AWS_ACCESS_KEY:+*****}${NC}"
+  echo -e "  AWS Secret Key:        ${GREEN}${AWS_SECRET_KEY:+*****}${NC}"
+  echo -e "  SSH Private Key File:  ${GREEN}${SSH_PRIVATE_KEY_FILE:-none}${NC}"
+  echo -e "  Output Enabled:        ${GREEN}$OUTPUT${NC}"
+  echo -e "  Output Directory:      ${GREEN}$OUTPUT_DIR${NC}"
+  echo -e "  Manifests Directory:   ${GREEN}$MANIFESTS_DIR${NC}"
+  echo -e "  Working Directory:     ${GREEN}$WORKING_DIR${NC}"
+  echo -e "  Dry Run:               ${GREEN}$DRY_RUN${NC}"
+  echo -e "  Force Mode:            ${GREEN}$FORCE${NC}"
+  echo -e "  Verbose Mode:          ${GREEN}$VERBOSE${NC}"
+  echo
+}
+
+# Confirm before proceeding
+confirm_action() {
+  print_config
+  # Confirm action (unless force or dry-run)
+  if $FORCE || $DRY_RUN; then
+    return 0
+  fi
+
+  read -rp "Do you want to proceed with ${ACTION}? [y/N] " confirm
+  if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+    echo -e "${YELLOW}Operation cancelled${NC}"
+    exit 0
+  fi
+}
+
+# Parse command line arguments
 parse_args() {
-    if [ $# -lt 1 ]; then
-        usage
-    fi
+  if [[ $# -lt 1 ]]; then
+    usage
+  fi
 
-    ACTION=$1
-    shift
+  ACTION="$1"
+  shift
 
-    if [ "$ACTION" != "install" ] && [ "$ACTION" != "uninstall" ]; then
-        echo "Invalid action: $ACTION"
-        usage
-    fi
+  if [[ "$ACTION" != "install" && "$ACTION" != "uninstall" ]]; then
+    echo -e "${RED}Error: Invalid action '$ACTION'. Must be 'install' or 'uninstall'${NC}"
+    usage
+  fi
 
-    while [ $# -gt 0 ]; do
-        case $1 in
-        -p | --name-prefix)
-            NAME_PREFIX="$2"
-            shift 2
-            ;;
-        -e | --eso-version)
-            ESO_VERSION="$2"
-            shift 2
-            ;;
-        -n | --namespace)
-            NAMESPACE="$2"
-            shift 2
-            ;;
-        -r | --region)
-            AWS_REGION="$2"
-            shift 2
-            ;;
-        -a | --access-key)
-            AWS_ACCESS_KEY_ID="$2"
-            shift 2
-            ;;
-        -s | --secret-key)
-            AWS_SECRET_ACCESS_KEY="$2"
-            shift 2
-            ;;
-        -xp | --skip-param-store)
-            SKIP_PARAM_STORE="true"
-            shift
-            ;;
-        -xe | --skip-ecr)
-            SKIP_ECR="true"
-            shift
-            ;;
-        -h | --help)
-            usage
-            ;;
-        *)
-            echo "Unknown option: $1"
-            usage
-            ;;
-        esac
-    done
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    install|uninstall)
+      COMMAND="$1"
+      shift
+      ;;
+    -p=*|--name-prefix=*)
+      NAME_PREFIX="${1#*=}"
+      shift
+      ;;
+    -p|--name-prefix)
+      NAME_PREFIX="$2"
+      shift 2
+      ;;
+    -n=*|--namespace=*)
+      NAMESPACE="${1#*=}"
+      shift
+      ;;
+    -n|--namespace)
+      NAMESPACE="$2"
+      shift 2
+      ;;
+    -r=*|--region=*)
+      REGION="${1#*=}"
+      shift
+      ;;
+    -r|--region)
+      REGION="$2"
+      shift 2
+      ;;
+    -a=*|--access-key=*)
+      AWS_ACCESS_KEY="${1#*=}"
+      shift
+      ;;
+    -a|--access-key)
+      AWS_ACCESS_KEY="$2"
+      shift 2
+      ;;
+    -s=*|--secret-key=*)
+      AWS_SECRET_KEY="${1#*=}"
+      shift
+      ;;
+    -s|--secret-key)
+      AWS_SECRET_KEY="$2"
+      shift 2
+      ;;
+    -k=*|--ssh-key-file=*)
+      SSH_PRIVATE_KEY_FILE="${1#*=}"
+      shift
+      ;;
+    -k|--ssh-key-file)
+      SSH_PRIVATE_KEY_FILE="$2"
+      shift 2
+      ;;
+    -o|--output)
+      OUTPUT=true
+      shift
+      ;;
+    -w=*|--working-dir=*)
+      WORKING_DIR="${1#*=}"
+      OUTPUT_DIR="${WORKING_DIR}/$DEFAULT_OUTPUT_DIR_NAME"
+      MANIFESTS_DIR="${WORKING_DIR}/$DEFAULT_MANIFESTS_DIR_NAME"
+      shift
+      ;;
+    -w|--working-dir)
+      WORKING_DIR="$2"
+      OUTPUT_DIR="${WORKING_DIR}/$DEFAULT_OUTPUT_DIR_NAME"
+      MANIFESTS_DIR="${WORKING_DIR}/$DEFAULT_MANIFESTS_DIR_NAME"
+      shift 2
+      ;;
+    -d|--dry-run)
+      DRY_RUN=true
+      VERBOSE=true
+      shift
+      ;;
+    -f|--force)
+      FORCE=true
+      shift
+      ;;
+    -v|--verbose)
+      VERBOSE=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      ;;
+    *=*)
+      echo -e "${RED}Error: Unknown option $1${NC}"
+      usage
+      ;;
+    *)
+      echo -e "${RED}Error: Unknown option $1${NC}"
+      usage
+      ;;
+    esac
+  done
 
-    # Set defaults if not provided
-    ESO_VERSION=${ESO_VERSION:-$DEFAULT_ESO_VERSION}
-    NAMESPACE=${NAMESPACE:-$DEFAULT_NAMESPACE}
-    AWS_REGION=${AWS_REGION:-$DEFAULT_AWS_REGION}
-    SKIP_PARAM_STORE=${SKIP_PARAM_STORE:-$DEFAULT_SKIP_PARAM_STORE}
-    SKIP_ECR=${SKIP_ECR:-$DEFAULT_SKIP_ECR}
-    REFRESH_INTERVAL=${REFRESH_INTERVAL:-$DEFAULT_REFRESH_INTERVAL}
+  # Set default values for optional parameters
+  NAME_PREFIX="${NAME_PREFIX:-$NAMESPACE}"
 
-    # Set name prefix to namespace if not provided
-    NAME_PREFIX=${NAME_PREFIX:-$NAMESPACE}
+  # Read SSH private key if specified
+  if [[ -n "$SSH_PRIVATE_KEY_FILE" ]]; then
+    read_ssh_private_key || usage
+  fi
 
-    # Set AWS secret name
-    AWS_SECRET_NAME="${NAME_PREFIX}-aws-credentials"
-
-    # Get AWS credentials from env if not provided
-    AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-$AWS_ACCESS_KEY_ID}
-    AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-$AWS_SECRET_ACCESS_KEY}
-
-    # Determine if ESO needs to be installed
-    INSTALL_ESO="false"
-    if [ "$ACTION" = "install" ] && { [ "$SKIP_PARAM_STORE" = "false" ] || [ "$SKIP_ECR" = "false" ]; }; then
-        INSTALL_ESO="true"
-    fi
-
-    # Set output directory
-    TIMESTAMP=$(date +%Y%m%d%H%M%S)
-    OUTPUT_DIR="./manifests/${ACTION}/${TIMESTAMP}"
-
-    # Validate required arguments
-    if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-        echo "Error: AWS credentials must be provided either via arguments or environment variables"
-        usage
-    fi
+  # Validate AWS credentials for install (unless dry-run)
+  if [[ "$ACTION" == "install" && (-z "$AWS_ACCESS_KEY" || -z "$AWS_SECRET_KEY") && ! $DRY_RUN ]]; then
+    echo -e "${YELLOW}Warning: AWS credentials not provided. Some features may not work.${NC}"
+  fi
 }
+
+parse_argsx() {
+  if [[ $# -lt 1 ]]; then
+    usage
+  fi
+
+  local cmd="$1"
+  if [[ "$cmd" != "install" && "$cmd" != "uninstall" ]]; then
+    echo -e "${RED}Error: Invalid action '$cmd'. Must be 'install' or 'uninstall'${NC}"
+    usage
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -p | --name-prefix)
+      NAME_PREFIX="$2"
+      shift 2
+      ;;
+    -n | --namespace)
+      NAMESPACE="$2"
+      shift 2
+      ;;
+    -r | --region)
+      REGION="$2"
+      shift 2
+      ;;
+    -a | --access-key)
+      AWS_ACCESS_KEY="$2"
+      shift 2
+      ;;
+    -s | --secret-key)
+      AWS_SECRET_KEY="$2"
+      shift 2
+      ;;
+    -k | --ssh-key-file)
+      SSH_PRIVATE_KEY_FILE="$2"
+      shift 2
+      ;;
+    -o | --output)
+      OUTPUT=true
+      shift
+      ;;
+    -w | --working-dir)
+      WORKING_DIR="$2"
+      OUTPUT_DIR="${WORKING_DIR}/$DEFAULT_OUTPUT_DIR_NAME"
+      MANIFESTS_DIR="${WORKING_DIR}/$DEFAULT_MANIFESTS_DIR_NAME"
+      shift 2
+      ;;
+    -d | --dry-run)
+      DRY_RUN=true
+      VERBOSE=true
+      shift
+      ;;
+    -f | --force)
+      FORCE=true
+      shift
+      ;;
+    -v | --verbose)
+      VERBOSE=true
+      shift
+      ;;
+    -h | --help)
+      usage
+      ;;
+    *)
+      echo -e "${RED}Error: Unknown option $1${NC}"
+      usage
+      ;;
+    esac
+  done
+
+  # Set default values for optional parameters
+  NAME_PREFIX="${NAME_PREFIX:-$NAMESPACE}"
+
+  # Read SSH private key if specified
+  if [[ -n "$SSH_PRIVATE_KEY_FILE" ]]; then
+    read_ssh_private_key || usage
+  fi
+
+  # Validate AWS credentials for install (unless dry-run)
+  if [[ "$ACTION" == "install" && (-z "$AWS_ACCESS_KEY" || -z "$AWS_SECRET_KEY") && ! $DRY_RUN ]]; then
+    echo -e "${YELLOW}Warning: AWS credentials not provided. Some features may not work.${NC}"
+  fi
+}
+
+# --- Main Function ---
 
 main() {
-    check_dependencies
-    parse_args "$@"
-    confirm
+  parse_args "$@"
 
-    if [ "$ACTION" = "install" ]; then
-        install_eso
-        create_namespace
-        aws_credentials_secret
-        parameter_store_external_secret
-        ecr_external_secret
-        echo "Installation completed successfully!"
-        echo "Manifests saved in: $OUTPUT_DIR"
-    elif [ "$ACTION" = "uninstall" ]; then
-        ecr_external_secret
-        parameter_store_external_secret
-        aws_credentials_secret
-        if [ "$INSTALL_ESO" = "true" ]; then
-            echo "Uninstalling External Secrets Operator version $ESO_VERSION skipped. Please do it manually."
-            #uninstall_eso
-        fi
-        echo "Uninstallation completed successfully!"
-        echo "Manifests saved in: $OUTPUT_DIR"
+  # Check dependencies (unless dry-run)
+  if ! $DRY_RUN && ! check_dependencies; then
+    echo -e "${RED}Error: Required dependencies are missing${NC}"
+    exit 1
+  fi
+
+  # Confirm action
+  confirm_action
+
+  # Execute action
+  if $DRY_RUN; then
+    echo -e "${YELLOW}=== DRY RUN MODE ===${NC}"
+    echo -e "${YELLOW}No changes will be made to the cluster${NC}"
+    echo
+  fi
+
+  case "$ACTION" in
+  install)
+    if ! $DRY_RUN; then
+      create_namespace || exit 1
     fi
+    process_manifests install || exit 1
+    if $DRY_RUN; then
+      echo -e "${GREEN}Dry run completed - no changes made${NC}"
+    else
+      echo -e "${GREEN}Installation completed successfully!${NC}"
+    fi
+    ;;
+  uninstall)
+    process_manifests uninstall || exit 1
+    if $DRY_RUN; then
+      echo -e "${GREEN}Dry run completed - no changes made${NC}"
+    else
+      echo -e "${GREEN}Uninstallation completed successfully!${NC}"
+    fi
+    ;;
+  esac
 }
 
-main "$@"
+# Only execute if run directly
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
+
+#./manifest.sh install \
+#  -p my-prefix \
+#  -n my-namespace \
+#  -r us-west-2 \
+#  -a my-access-key \
+#  -s my-secret-key \
+#  -k /path/to/ssh-private-key \
+#  -o \
+#  -w /path/to/working-dir \
+#  -d \
+#  -f \
+#  -v
+
+#./manifest.sh install \
+#  --name-prefix=my-prefix \
+#  --namespace=my-namespace \
+#  --region=us-west-2 \
+#  --access-key=my-access-key \
+#  --secret-key=my-secret-key \
+#  --ssh-key-file=/path/to/ssh-private-key \
+#  --output \
+#  --working-dir=/path/to/working-dir \
+#  --dry-run \
+#  --force \
+#  --verbose

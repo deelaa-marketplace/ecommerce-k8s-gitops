@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: ecommerce
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - cluster: dev
+            url: https://kubernetes.default.svc
+#          - cluster: prod
+#            url: https://kubernetes.default.svc
+  template:
+    metadata:
+      name: 'ecommerce-{{cluster}}'
+      labels:
+        app: ecommerce
+        env: '{{cluster}}'
+
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/deelaa-marketplace/ecommerce-k8s-gitops.git
+        targetRevision: HEAD
+        path: clusters/{{cluster}}/app-of-apps
+      destination:
+        server: '{{url}}'
+        namespace: 'ecommerce-{{cluster}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
