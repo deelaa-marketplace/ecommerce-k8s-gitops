@@ -6,6 +6,8 @@ metadata:
   labels:
     argocd.argoproj.io/secret-type: repository
 stringData:
+  project: "ecommerce-app"
+  name: "ecommerce-app-repo"
   type: "git"
   url: "git@github.com/deelaa-marketplace/ecommerce-k8s-gitops.git"
 data:
