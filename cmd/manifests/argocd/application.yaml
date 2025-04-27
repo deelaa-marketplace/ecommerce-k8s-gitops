@@ -21,7 +21,7 @@ spec:
     spec:
       project: ecommerce-app
       source:
-        repoURL: ssh://git@github.com/deelaa-marketplace/ecommerce-k8s-gitops.git
+        repoURL: git@github.com/deelaa-marketplace/ecommerce-k8s-gitops.git
         targetRevision: HEAD
         path: clusters/{{cluster}}/app-of-apps
       destination:
@@ -31,5 +31,3 @@ spec:
         automated:
           prune: true
           selfHeal: true
-      privateKeySecret:
-        name: ecommerce-app-repo-secret
