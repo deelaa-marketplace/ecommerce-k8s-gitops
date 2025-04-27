@@ -10,7 +10,7 @@ NC='\033[0m' # No Color
 # Default configurations
 DEFAULT_NAMESPACE="default"
 DEFAULT_AWS_PROFILE="default"
-DEFAULT_REGION="eu-west-1"
+#DEFAULT_REGION="eu-west-1"
 DEFAULT_MANIFESTS_DIR_NAME="manifests"
 DEFAULT_OUTPUT_DIR_NAME="manifests-output"
 DEFAULT_WORKING_DIR="."
@@ -19,7 +19,7 @@ DEFAULT_WORKING_DIR="."
 ACTION=""
 NAMESPACE=$DEFAULT_NAMESPACE
 AWS_PROFILE=$DEFAULT_AWS_PROFILE
-REGION=$DEFAULT_REGION
+REGION=""
 AWS_ACCESS_KEY="${AWS_ACCESS_KEY_ID:-}"
 AWS_SECRET_KEY="${AWS_SECRET_ACCESS_KEY:-}"
 SSH_PRIVATE_KEY_FILE=""
@@ -43,7 +43,7 @@ usage() {
   echo -e "${BLUE}Options:${NC}"
   echo "  -n, --namespace NS         Kubernetes namespace (default: $DEFAULT_NAMESPACE)"
   echo "  -p, --aws-profile PROFILE  AWS profile name (default: $DEFAULT_AWS_PROFILE)"
-  echo "  -r, --region REGION        AWS region (default: $DEFAULT_REGION)"
+  echo "  -r, --region REGION        AWS region"
   echo "  -a, --access-key KEY       AWS Access Key ID"
   echo "  -s, --secret-key KEY       AWS Secret Access Key"
   echo "  -k, --ssh-key-file FILE    Path to SSH private key file"
