@@ -9,7 +9,7 @@ NC='\033[0m' # No Color
 
 # Paths to component scripts
 K3S_SCRIPT="./k3s.sh"
-ESO_SCRIPT="./eso.sh"
+ESO_SCRIPT="./manifest.sh"
 
 # Function to print header
 print_header() {
@@ -87,33 +87,33 @@ main() {
     case "$1" in
         --install)
             print_header "Starting Complete Installation"
-            if ! run_component "$K3S_SCRIPT" "--install"; then
+            if ! run_component "$K3S_SCRIPT" "install"; then
                 exit 1
             fi
-            if ! run_component "$ESO_SCRIPT" "--install"; then
+            if ! run_component "$ESO_SCRIPT" "install"; then
                 echo -e "${YELLOW}Continuing despite ESO installation issue${NC}"
             fi
             ;;
         --uninstall)
             print_header "Starting Complete Uninstallation"
-            run_component "$ESO_SCRIPT" "--uninstall"
-            run_component "$K3S_SCRIPT" "--uninstall"
+            run_component "$ESO_SCRIPT" "uninstall"
+            run_component "$K3S_SCRIPT" "uninstall"
             ;;
         --install-k3s)
             print_header "Installing K3s Only"
-            run_component "$K3S_SCRIPT" "--install"
+            run_component "$K3S_SCRIPT" "install"
             ;;
         --uninstall-k3s)
             print_header "Uninstalling K3s Only"
-            run_component "$K3S_SCRIPT" "--uninstall"
+            run_component "$K3S_SCRIPT" "uninstall"
             ;;
         --install-eso)
             print_header "Installing ESO Only"
-            run_component "$ESO_SCRIPT" "--install"
+            run_component "$ESO_SCRIPT" "install"
             ;;
         --uninstall-eso)
             print_header "Uninstalling ESO Only"
-            run_component "$ESO_SCRIPT" "--uninstall"
+            run_component "$ESO_SCRIPT" "uninstall"
             ;;
         -h|--help)
             usage

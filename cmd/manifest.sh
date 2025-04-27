@@ -9,6 +9,7 @@ NC='\033[0m' # No Color
 
 # Default configurations
 DEFAULT_NAMESPACE="default"
+DEFAULT_AWS_PROFILE="default"
 DEFAULT_REGION="eu-west-1"
 DEFAULT_MANIFESTS_DIR_NAME="manifests"
 DEFAULT_OUTPUT_DIR_NAME="manifests-output"
@@ -17,6 +18,7 @@ DEFAULT_WORKING_DIR="."
 # Initialize variables
 ACTION=""
 NAMESPACE=$DEFAULT_NAMESPACE
+AWS_PROFILE=$DEFAULT_AWS_PROFILE
 REGION=$DEFAULT_REGION
 AWS_ACCESS_KEY="${AWS_ACCESS_KEY_ID:-}"
 AWS_SECRET_KEY="${AWS_SECRET_ACCESS_KEY:-}"
@@ -31,6 +33,7 @@ DRY_RUN=false
 OUTPUT=false
 
 
+
 # --- Helper Functions ---
 
 # Print usage information
@@ -38,8 +41,8 @@ usage() {
   echo -e "${BLUE}Usage: $0 <install|uninstall> [OPTIONS]${NC}"
   echo
   echo -e "${BLUE}Options:${NC}"
-  echo "  -p, --name-prefix PREFIX   Unique name prefix for resources (default: $DEFAULT_NAMESPACE)"
   echo "  -n, --namespace NS         Kubernetes namespace (default: $DEFAULT_NAMESPACE)"
+  echo "  -p, --aws-profile PROFILE  AWS profile name (default: $DEFAULT_AWS_PROFILE)"
   echo "  -r, --region REGION        AWS region (default: $DEFAULT_REGION)"
   echo "  -a, --access-key KEY       AWS Access Key ID"
   echo "  -s, --secret-key KEY       AWS Secret Access Key"
@@ -277,11 +280,84 @@ read_ssh_private_key() {
   fi
 }
 
+# Read AWS credentials from ~/.aws/credentials
+read_aws_credentials() {
+    local aws_creds_file="$HOME/.aws/credentials"
+
+    if [[ -f "$aws_creds_file" ]]; then
+        echo -e "${YELLOW}Reading AWS credentials from $aws_creds_file${NC}"
+
+        # Read the specified profile (defaults to [default])
+        while IFS=' =' read -r key value; do
+            if [[ "$key" == "[$AWS_PROFILE]" ]]; then
+                in_profile=true
+            elif [[ "$in_profile" == true && "$key" == "aws_access_key_id" ]]; then
+                AWS_ACCESS_KEY="$value"
+            elif [[ "$in_profile" == true && "$key" == "aws_secret_access_key" ]]; then
+                AWS_SECRET_KEY="$value"
+            elif [[ "$key" == "["* ]] && [[ "$in_profile" == true ]]; then
+                break  # Reached another profile section
+            fi
+        done < "$aws_creds_file"
+
+        if [[ -z "$AWS_ACCESS_KEY" || -z "$AWS_SECRET_KEY" ]]; then
+            echo -e "${YELLOW}Warning: AWS credentials not found for profile [$AWS_PROFILE]${NC}"
+            return 1
+        fi
+
+        echo -e "${GREEN}Successfully read AWS credentials for profile [$AWS_PROFILE]${NC}"
+        return 0
+    else
+        echo -e "${YELLOW}AWS credentials file not found at $aws_creds_file${NC}"
+        return 1
+    fi
+}
+
+# Read AWS config (including region) from ~/.aws/config
+read_aws_config() {
+    local aws_config_file="$HOME/.aws/config"
+
+    if [[ -f "$aws_config_file" ]]; then
+        echo -e "${YELLOW}Reading AWS config from $aws_config_file${NC}"
+
+        # AWS config file uses profile format like [profile name] except for default
+        local config_profile
+        if [[ "$AWS_PROFILE" == "default" ]]; then
+            config_profile="[default]"
+        else
+            config_profile="[profile $AWS_PROFILE]"
+        fi
+
+        # Read the specified profile
+        while IFS=' =' read -r key value; do
+            if [[ "$key" == "$config_profile" ]]; then
+                in_profile=true
+            elif [[ "$in_profile" == true && "$key" == "region" ]]; then
+                REGION="$value"
+                break  # We got what we needed
+            elif [[ "$key" == "["* ]] && [[ "$in_profile" == true ]]; then
+                break  # Reached another profile section
+            fi
+        done < "$aws_config_file"
+
+        if [[ -n "$REGION" ]]; then
+            echo -e "${GREEN}Found region '$REGION' in AWS config for profile [$AWS_PROFILE]${NC}"
+            return 0
+        else
+            echo -e "${YELLOW}No region found in AWS config for profile [$AWS_PROFILE]${NC}"
+            return 1
+        fi
+    else
+        echo -e "${YELLOW}AWS config file not found at $aws_config_file${NC}"
+        return 1
+    fi
+}
 # Print current configuration
 print_config() {
   echo -e "${BLUE}Current Configuration:${NC}"
   echo -e "  Action:                ${GREEN}$ACTION${NC}"
   echo -e "  Namespace:             ${GREEN}$NAMESPACE${NC}"
+  echo -e "  AWS Profile:           ${GREEN}$AWS_PROFILE${NC}"
   echo -e "  AWS Region:            ${GREEN}$REGION${NC}"
   echo -e "  AWS Access Key:        ${GREEN}${AWS_ACCESS_KEY:+*****}${NC}"
   echo -e "  AWS Secret Key:        ${GREEN}${AWS_SECRET_KEY:+*****}${NC}"
@@ -331,20 +407,20 @@ parse_args() {
       COMMAND="$1"
       shift
       ;;
-    -p=*|--name-prefix=*)
-      NAME_PREFIX="${1#*=}"
-      shift
-      ;;
-    -p|--name-prefix)
-      NAME_PREFIX="$2"
-      shift 2
-      ;;
     -n=*|--namespace=*)
       NAMESPACE="${1#*=}"
       shift
       ;;
     -n|--namespace)
       NAMESPACE="$2"
+      shift 2
+      ;;
+    -p=*|--aws-profile=*)
+      AWS_PROFILE="${1#*=}"
+      shift
+      ;;
+    -p|--aws-profile)
+      AWS_PROFILE="$2"
       shift 2
       ;;
     -r=*|--region=*)
@@ -422,14 +498,20 @@ parse_args() {
     esac
   done
 
-  # Set default values for optional parameters
-  NAME_PREFIX="${NAME_PREFIX:-$NAMESPACE}"
-
-  # Read SSH private key if specified
+  # Read SSH private key file is specified
   if [[ -n "$SSH_PRIVATE_KEY_FILE" ]]; then
     read_ssh_private_key || usage
   fi
 
+  # Read AWS config first (to get region)
+  if [[ -z "$REGION" ]]; then
+    read_aws_config || echo -e "${YELLOW}Proceeding without AWS Region${NC}"
+  fi
+
+  # Read AWS credentials if not provided via command line
+  if [[ -z "$AWS_ACCESS_KEY" || -z "$AWS_SECRET_KEY" ]]; then
+    read_aws_credentials || echo -e "${YELLOW}Proceeding without AWS credentials${NC}"
+  fi
   # Validate AWS credentials for install (unless dry-run)
   if [[ "$ACTION" == "install" && (-z "$AWS_ACCESS_KEY" || -z "$AWS_SECRET_KEY") && ! $DRY_RUN ]]; then
     echo -e "${YELLOW}Warning: AWS credentials not provided. Some features may not work.${NC}"
@@ -449,12 +531,12 @@ parse_argsx() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-    -p | --name-prefix)
-      NAME_PREFIX="$2"
-      shift 2
-      ;;
     -n | --namespace)
       NAMESPACE="$2"
+      shift 2
+      ;;
+    -p | --aws-profile)
+      AWS_PROFILE="$2"
       shift 2
       ;;
     -r | --region)
@@ -506,8 +588,6 @@ parse_argsx() {
     esac
   done
 
-  # Set default values for optional parameters
-  NAME_PREFIX="${NAME_PREFIX:-$NAMESPACE}"
 
   # Read SSH private key if specified
   if [[ -n "$SSH_PRIVATE_KEY_FILE" ]]; then
@@ -592,3 +672,5 @@ fi
 #  --dry-run \
 #  --force \
 #  --verbose
+
+#sudo bash manifest.sh install -n ecommerce-dev -k ~/.ssh/id_ed25519  -v -d
