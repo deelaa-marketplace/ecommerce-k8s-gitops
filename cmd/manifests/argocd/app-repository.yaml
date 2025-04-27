@@ -10,4 +10,4 @@ stringData:
   url: "git@github.com/deelaa-marketplace/ecommerce-k8s-gitops.git"
 data:
   sshPrivateKey: |
-    ${SSH_PRIVATE_KEY}
+    ${SSH_PRIVATE_KEY_B64}
