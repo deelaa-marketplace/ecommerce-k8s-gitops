@@ -116,7 +116,8 @@ process_template() {
   local processed_manifest
 
   # Export variables for envsubst
-  export NAMESPACE REGION AWS_ACCESS_KEY AWS_SECRET_KEY SSH_PRIVATE_KEY
+  export NAMESPACE AWS_ACCESS_KEY AWS_SECRET_KEY SSH_PRIVATE_KEY AWS_REGION="${REGION}"
+
   if [[ -n "$AWS_ACCESS_KEY" ]]; then
     local AWS_ACCESS_KEY_B64
     AWS_ACCESS_KEY_B64=$(echo -n "$AWS_ACCESS_KEY" | base64 -w0)
@@ -569,12 +570,11 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 fi
 
 #./manifest.sh install \
-#  -p my-prefix \
-#  -n my-namespace \
-#  -r us-west-2 \
+#  -n ecommerce-dev \
+#  -r eu-west-1 \
 #  -a my-access-key \
 #  -s my-secret-key \
-#  -k /path/to/ssh-private-key \
+#  -k ~/.ssh/id_ed25519 \
 #  -o \
 #  -w /path/to/working-dir \
 #  -d \
@@ -582,12 +582,11 @@ fi
 #  -v
 
 #./manifest.sh install \
-#  --name-prefix=my-prefix \
-#  --namespace=my-namespace \
-#  --region=us-west-2 \
+#  --namespace=mecommerce-dev \
+#  --region=eu-west-1 \
 #  --access-key=my-access-key \
 #  --secret-key=my-secret-key \
-#  --ssh-key-file=/path/to/ssh-private-key \
+#  --ssh-key-file=~/.ssh/id_ed25519 \
 #  --output \
 #  --working-dir=/path/to/working-dir \
 #  --dry-run \

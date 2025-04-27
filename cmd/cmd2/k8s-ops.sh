@@ -215,7 +215,7 @@ install_argocd() {
 
     # Get initial admin password
     ARGOCD_PASSWORD=$(kubectl -n $ARGOCD_NAMESPACE get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-    
+
     echo -e "${GREEN}ArgoCD installed successfully${NC}"
     echo -e "${YELLOW}ArgoCD Dashboard URL: http://$NODE_IP:$ARGOCD_PORT${NC}"
     echo -e "${YELLOW}Username: admin${NC}"
