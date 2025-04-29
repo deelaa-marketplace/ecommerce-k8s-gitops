@@ -532,14 +532,31 @@ install_argocd() {
     echo -e "${YELLOW}Waiting for ArgoCD to be ready...${NC}"
     kubectl wait --for=condition=available deployment/argocd-server -n "$ARGO_NS" --timeout=300s
 
+    # install argocd CLI
+    install_argocd_cli
+
     # Get admin password
     local argocd_password
     argocd_password=$(kubectl -n "$ARGO_NS" get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-
+# kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
     echo -e "${GREEN}ArgoCD installed successfully!${NC}"
     echo -e "${YELLOW}Dashboard URL: http://$NODE_IP:$ARGO_PORT${NC}"
     echo -e "${YELLOW}Username: admin${NC}"
     echo -e "${YELLOW}Password: $argocd_password${NC}"
+}
+
+# Function to install ArgoCD CLI
+install_argocd_cli() {
+  if command_exists argocd; then
+    echo -e "${GREEN}ArgoCD CLI is already installed${NC}"
+    return
+  fi
+
+  echo -e "${YELLOW}Installing ArgoCD CLI...${NC}"
+  curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/download/"$ARGO_VERSION"/argocd-linux-amd64
+  sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
+  rm argocd-linux-amd64
+  echo -e "${GREEN}ArgoCD CLI installed successfully${NC}"
 }
 
 install_eso() {

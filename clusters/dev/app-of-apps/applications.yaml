@@ -10,7 +10,7 @@ spec:
   goTemplateOptions: ["missingkey=error"]
   generators:
     - git:
-        repoURL: 'https://github.com/deelaa-marketplace/ecommerce-k8s-gitops.git'
+        repoURL: 'git@github.com/deelaa-marketplace/ecommerce-k8s-gitops.git'
         revision: HEAD
         directories:
           - path: 'clusters/*/apps/*'
@@ -35,7 +35,7 @@ spec:
     spec:
       project: default
       source:
-        repoURL: 'https://github.com/deelaa-marketplace/ecommerce-k8s-gitops.git'
+        repoURL: 'git@github.com/deelaa-marketplace/ecommerce-k8s-gitops.git'
         targetRevision: 'HEAD'
         path: '{{.path.path}}'
       destination:
@@ -43,7 +43,7 @@ spec:
         namespace: '{{.values.namespace}}'
       syncPolicy:
         automated:
-          prune: true
-          selfHeal: true
+          prune: false
+          selfHeal: false
         syncOptions:
           - CreateNamespace=true
