@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: "$APP_NAME"
+  name: "$APP_NAME-deployment"
   #namespace: ecommerce-dev
   #labels:
     #app: cart-service
@@ -21,6 +21,10 @@ spec:
           image: nginx:latest
           ports:
             - containerPort: $APP_PORT
+          readinessProbe:
+            httpGet:
+              port: "$APP_PORT"
+              path: /health
           # The containerPort is set to the value of APP_PORT from the ConfigMap
           # This allows the container to listen on the specified port
           envFrom:
@@ -36,4 +40,5 @@ spec:
               cpu: "1" # Limits to 1 vCPU
               memory: "1Gi" # Limits to 1 GiB of RAM
       imagePullSecrets:
-        - name: ecr-secret
+        - name: dev-ecr-secret
+

@@ -1,0 +1,74 @@
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: "ecm-config-server-dev-param-store-external-secret"
+
+spec:
+  refreshInterval: "24h"
+  secretStoreRef:
+    name: "dev-parameter-store-secret-store"
+    kind: "SecretStore"
+  target:
+    name: "ecm-config-server-dev-parameter-store-secret"
+  data:
+    - secretKey: "GITHUB_TOKEN"
+      remoteRef:
+        key: "/default/ecm-config-server/github-key"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "ecm-config-server"
+spec:
+  selector:
+    app: "ecm-config-server"
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: ClusterIP
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "ecm-config-server-deployment"
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "ecm-config-server"
+  template:
+    metadata:
+      labels:
+        app: "ecm-config-server"
+        env: "dev"
+    spec:
+      containers:
+        - name: ecm-config-server
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              port: 80
+              path: /health
+          # The containerPort is set to the value of APP_PORT from the ConfigMap
+          # This allows the container to listen on the specified port
+          envFrom:
+            - configMapRef:
+                name: "ecm-config-server"
+            - secretRef:
+                name: "ecm-config-server-dev-parameter-store-secret"
+          resources:
+            requests:
+              cpu: "500m" # Requests 500 millicores (~0.5 vCPU)
+              memory: "512Mi" # Requests 512 MiB of RAM
+            limits:
+              cpu: "1" # Limits to 1 vCPU
+              memory: "1Gi" # Limits to 1 GiB of RAM
+#      imagePullSecrets:
+#        - name: dev-ecr-secret

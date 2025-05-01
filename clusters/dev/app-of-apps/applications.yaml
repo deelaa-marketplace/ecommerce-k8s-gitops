@@ -3,7 +3,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: app-ecommerce-dev
+  name: ecommerce-dev-apps
   namespace: argocd
 spec:
   goTemplate: true
@@ -13,27 +13,27 @@ spec:
         repoURL: 'git@github.com/deelaa-marketplace/ecommerce-k8s-gitops.git'
         revision: HEAD
         directories:
-          - path: 'clusters/*/apps/*'
+          - path: 'clusters/dev/apps/*'
             values:
-              env: '{{index .path.segments 0}}'
+              env: 'dev'
               appname: '{{.path.basename}}'
-              namespace: 'ecommerce-{{index .path.segments 0}}'
+              namespace: 'ecommerce-dev'
           - path: 'clusters/argocd/*'
             exclude: true
 
   template:
     metadata:
       name: '{{.values.appname}}-{{.values.env}}'
+      namespace: '{{.values.namespace}}'
       labels:
         app: '{{.values.appname}}'
         env: '{{.values.env}}'
         app.kubernetes.io/instance: '{{.values.appname}}'
         app.kubernetes.io/managed-by: argocd
         app.kubernetes.io/part-of: '{{.values.appname}}'
-        app.kubernetes.io/version: v1.0.0
-        app.kubernetes.io/created-by: argocd
+
     spec:
-      project: default
+      project: ecommerce-app
       source:
         repoURL: 'git@github.com/deelaa-marketplace/ecommerce-k8s-gitops.git'
         targetRevision: 'HEAD'

@@ -9,13 +9,17 @@ resources:
 
 namespace: default
 
-commonLabels:
-  app: application
-  env: default
+labels:
+  - includeSelectors: true
+    includeTemplates: true
+    pairs:
+      app: application
+      env: default
 
 commonAnnotations:
   app.interpolated.resource: "true"
   app.kubernetes.io/managed-by: kustomize
+  kustomize.interpolated.resource: "true"
 
 
 images:

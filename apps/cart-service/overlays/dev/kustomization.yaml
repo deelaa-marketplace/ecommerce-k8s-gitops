@@ -6,8 +6,11 @@ resources:
 
 namespace: ecommerce-dev
 
-commonLabels:
-  env: dev
+labels:
+  - includeSelectors: true
+    includeTemplates: true
+    pairs:
+      env: dev
 
 commonAnnotations:
   app.interpolated.resource: "true"
@@ -23,6 +26,7 @@ configMapGenerator:
       - APP_NAME=cart-service
       - APP_NAMESPACE=ecommerce-dev
       - ENV=dev
+      - APP_ENV=test
 
 transformers:
-  - ../../base2/replacement.yaml
+  - ../../../base/replacement.yaml

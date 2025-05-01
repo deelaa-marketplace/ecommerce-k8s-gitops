@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+namespace: ecommerce-dev
+
+labels:
+  - includeSelectors: true
+    includeTemplates: true
+    pairs:
+      env: dev
+
+commonAnnotations:
+  app.interpolated.resource: "true"
+  app.kubernetes.io/managed-by: kustomize
+
+#patches:
+#  - path: patch-manifest.yaml
+
+configMapGenerator:
+  - name: app-config
+    behavior: merge  # ✅ Ensures values are merged instead of conflicting
+    literals:
+      - APP_NAME=cart-service
+      - APP_NAMESPACE=ecommerce-dev
+      - APP_ENV=test
+      - ENV=dev
+      - DB_NAME=cart-service
+      - DB_HOST=test.c8flhmnxenjx.eu-west-1.rds.amazonaws.com
+      - DB_PORT=5432
+      - AWS_REGION=eu-west-1
+      - AWS_ACCOUNT_ID=886129832542
+
+secretGenerator:
+  - name: cart-service
+    behavior: merge  # Ensures values are merged instead of conflicting
+    literals:
+      - DB_PASSWORD: "arn:aws:ssm:eu-west-1:886129832542:parameter/test/database/cart-service/password"
+      - DB_USERNAME: "arn:aws:ssm:eu-west-1:886129832542:parameter/test/database/cart-service/username"
+
+transformers:
+  - ../../base/replacement.yaml

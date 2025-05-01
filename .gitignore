@@ -16,3 +16,8 @@ gen
 .DS_Store
 .AppleDouble
 .LSOverride
+
+cmd/manifests/install
+cmd/manifests/uninstall
+cmd2
+cmd3

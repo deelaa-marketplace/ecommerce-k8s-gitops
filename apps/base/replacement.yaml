@@ -52,6 +52,12 @@ replacements:
         reject:
           - Kind: ConfigMap
             name: app-config
+#        options:
+#          regex: true
+#          pattern: "(.*?)\\$APP_NAME(.*)"
+#          replacement: "$1$SOURCE$2"
+#          delimiter: "/"
+
       - select:
           kind: Secret
           annotationSelector: "kustomize.interpolated.resource=true"
