@@ -62,6 +62,7 @@ usage() {
 
 # Get preferred IP address
 get_preferred_ip() {
+   #curl http://checkip.amazonaws.com
     local ip
     ip=$(hostname -I | awk '{print $1}')
     echo "$ip"
@@ -132,10 +133,7 @@ is_operator_installed() {
     local name="$2"
     local label="$3"
 
-    if kubectl get deployments -n "$ns" -l "$label" &>/dev/null; then
-        return 0
-    fi
-    return 1
+    kubectl get deployments -n "$ns" -l "$label" &>/dev/null
 }
 
 # Check if CRD is installed
@@ -493,8 +491,12 @@ install_argocd() {
 
     # Determine service type
     local service_type="NodePort"
+    local externalIP
     if [[ "$ARGO_PORT" -lt 30000 ]] || [[ "$ARGO_PORT" -gt 32767 ]]; then
         service_type="LoadBalancer"
+        externalIP=$(curl -s ifconfig.me) || {
+            echo -e "${RED}Error: Could not get external IP${NC}"
+        }
         echo -e "${YELLOW}Port $ARGO_PORT is outside NodePort range, using LoadBalancer${NC}"
     fi
 
@@ -517,6 +519,9 @@ install_argocd() {
         install_cmd+="--set server.service.nodePort=$ARGO_PORT"
     else
         install_cmd+="--set server.service.port=$ARGO_PORT"
+        if [[ "$externalIP" ]]; then
+          install_cmd+=" --set server.service.loadBalancerIP=$externalIP"
+        fi
     fi
 
     if $VERBOSE; then
@@ -598,7 +603,7 @@ install_eso() {
 
     # Wait for ESO
     echo -e "${YELLOW}Waiting for ESO to be ready...${NC}"
-    kubectl wait --for=condition=available deployment/$ESO_NAME -n "$ESO_NS" --timeout=300s
+    kubectl wait --for=condition=available deployment/"$ESO_NAME" -n "$ESO_NS" --timeout=300s
 
     echo -e "${GREEN}External Secrets Operator installed successfully!${NC}"
 }
