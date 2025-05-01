@@ -4,7 +4,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
   name: ecommerce-dev-apps
-  namespace: argocd
+  namespace: ecommerce-dev
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
@@ -29,7 +29,6 @@ spec:
         app: '{{.values.appname}}'
         env: '{{.values.env}}'
         app.kubernetes.io/instance: '{{.values.appname}}'
-        app.kubernetes.io/managed-by: argocd
         app.kubernetes.io/part-of: '{{.values.appname}}'
 
     spec:
