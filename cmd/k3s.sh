@@ -520,12 +520,14 @@ install_argocd() {
 
     if [[ "$service_type" == "NodePort" ]]; then
         install_cmd+="--set server.service.nodePort=$ARGO_PORT"
-        install_cmd+=" --set server.service.externalIPs={\"$EXTERNAL_IP\"}"
+        if [[ "$EXTERNAL_IP" ]]; then
+          install_cmd+=" --set server.service.externalIPs={\"$EXTERNAL_IP\"}"
+        fi
     else
         install_cmd+="--set server.service.port=$ARGO_PORT"
-#        if [[ "$EXTERNAL_IP" ]]; then
-#          install_cmd+=" --set server.service.externalIPs=$externalIP"
-#        fi
+        if [[ "$EXTERNAL_IP" ]]; then
+          install_cmd+=" --set server.service.loadBalancerIP=$EXTERNAL_IP"
+        fi
     fi
 
     if $VERBOSE; then
