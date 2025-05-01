@@ -678,3 +678,6 @@ fi
 #argocd login 172.31.35.65 --username admin --password $(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo) --insecure
 #argocd repo add git@github.com:deelaa-marketplace/ecommerce-k8s-gitops.git   --ssh-private-key-path ~/.ssh/id_ed25519
 #argocd app sync argocd-apps
+
+#kubectl port-forward service/argocd-server -n argocd 8080:443
+#kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer", "externalIPs":["3.252.140.186","172.31.35.65","3.252.140.186"] }}'

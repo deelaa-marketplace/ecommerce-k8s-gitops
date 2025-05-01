@@ -31,6 +31,7 @@ ESO_NAME=$DEFAULT_ESO_NAME
 SKIP_ESO=false
 VERBOSE=false
 FORCE=false
+EXTERNAL_IP=""
 
 # Dependency checks
 REQUIRED_CMDS=("kubectl" "helm" "curl" "jq")
@@ -284,6 +285,9 @@ parse_args() {
     fi
 
     # Auto-detect node IP if not provided
+    EXTERNAL_IP=$(curl -s ifconfig.me) || {
+                echo -e "${RED}Error: Could not get external IP${NC}"
+            }
     if [[ -z "$NODE_IP" ]]; then
         NODE_IP=$(get_preferred_ip)
         if [[ -z "$NODE_IP" ]]; then
@@ -395,6 +399,7 @@ print_config() {
     echo -e "  K3s Version: ${GREEN}$K3S_VERSION${NC}"
     echo -e "  Cluster Name: ${GREEN}$CLUSTER_NAME${NC}"
     echo -e "  Node IP: ${GREEN}$NODE_IP${NC}"
+    echo -e "  External IP: ${GREEN}$EXTERNAL_IP${NC}"
     if ! $SKIP_ARGO; then
         echo -e "  ArgoCD Version: ${GREEN}$ARGO_VERSION${NC}"
         echo -e "  ArgoCD Namespace: ${GREEN}$ARGO_NS${NC}"
@@ -491,12 +496,10 @@ install_argocd() {
 
     # Determine service type
     local service_type="NodePort"
-    local externalIP
+
     if [[ "$ARGO_PORT" -lt 30000 ]] || [[ "$ARGO_PORT" -gt 32767 ]]; then
         service_type="LoadBalancer"
-        externalIP=$(curl -s ifconfig.me) || {
-            echo -e "${RED}Error: Could not get external IP${NC}"
-        }
+
         echo -e "${YELLOW}Port $ARGO_PORT is outside NodePort range, using LoadBalancer${NC}"
     fi
 
@@ -517,11 +520,12 @@ install_argocd() {
 
     if [[ "$service_type" == "NodePort" ]]; then
         install_cmd+="--set server.service.nodePort=$ARGO_PORT"
+        install_cmd+=" --set server.service.externalIPs={\"$EXTERNAL_IP\"}"
     else
         install_cmd+="--set server.service.port=$ARGO_PORT"
-        if [[ "$externalIP" ]]; then
-          install_cmd+=" --set server.service.loadBalancerIP=$externalIP"
-        fi
+#        if [[ "$EXTERNAL_IP" ]]; then
+#          install_cmd+=" --set server.service.externalIPs=$externalIP"
+#        fi
     fi
 
     if $VERBOSE; then
@@ -558,7 +562,8 @@ install_argocd_cli() {
   fi
 
   echo -e "${YELLOW}Installing ArgoCD CLI...${NC}"
-  curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/download/"$ARGO_VERSION"/argocd-linux-amd64
+  #curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/download/"$ARGO_VERSION"/argocd-linux-amd64
+  curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
   sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
   rm argocd-linux-amd64
   echo -e "${GREEN}ArgoCD CLI installed successfully${NC}"
