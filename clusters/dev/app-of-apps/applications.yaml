@@ -16,20 +16,19 @@ spec:
           - path: 'clusters/dev/apps/*'
             values:
               env: 'dev'
-              appname: '{{.path.basename}}'
               namespace: 'ecommerce-dev'
           - path: 'clusters/argocd/*'
             exclude: true
 
   template:
     metadata:
-      name: '{{.values.appname}}-{{.values.env}}'
+      name: '{{.path.basename}}-{{.values.env}}'
       namespace: '{{.values.namespace}}'
       labels:
-        app: '{{.values.appname}}'
+        app: '{{.path.basename}}'
         env: '{{.values.env}}'
-        app.kubernetes.io/instance: '{{.values.appname}}'
-        app.kubernetes.io/part-of: '{{.values.appname}}'
+        app.kubernetes.io/instance: '{{.path.basename}}'
+        app.kubernetes.io/part-of: '{{.values.namespace}}'
 
     spec:
       project: ecommerce-app
