@@ -133,3 +133,9 @@ main "$@"
 
 #export SSH_PRIVATE_KEY_B64=$(awk 'NR==1{print $0; next} {print "    " $0}' ~/.ssh/id_ed25519)
 #export SSH_PRIVATE_KEY_B64=$(sed '1!s/^/    /' ~/.ssh/id_ed25519)
+
+
+#sudo bash k3s.sh uninstall -v -f
+#sudo bash k3s.sh install -v -f
+#sudo bash manifest.sh install -n ecommerce-dev -k ~/.ssh/id_ed25519  -v -f
+#sudo bash manifest.sh install -n argocd -k ~/.ssh/id_ed25519  -v -f
