@@ -682,3 +682,6 @@ fi
 #ssh -vT git@github.com
 #kubectl port-forward service/argocd-server -n argocd 8080:443
 #kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer", "externalIPs":["3.252.140.186","172.31.35.65","3.252.140.186"] }}'
+
+
+#kubectl patch application <application-name> -n argocd -p '{"metadata":{"finalizers":[]}}' --type=merge

@@ -48,27 +48,26 @@ spec:
         env: "dev"
     spec:
       containers:
-        - name: ecm-config-server
+        - name: ecm-config-server-nginx
           image: nginx:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 80
-          readinessProbe:
-            httpGet:
-              port: 80
-              path: /
+#          readinessProbe:
+#            httpGet:
+#              port: 80
+#              path: /
           # The containerPort is set to the value of APP_PORT from the ConfigMap
           # This allows the container to listen on the specified port
           envFrom:
             - configMapRef:
                 name: "ecm-config-server"
-            - secretRef:
-                name: "ecm-config-server-dev-parameter-store-secret"
           resources:
             requests:
-              cpu: "500m" # Requests 500 millicores (~0.5 vCPU)
-              memory: "512Mi" # Requests 512 MiB of RAM
-            limits:
-              cpu: "1" # Limits to 1 vCPU
-              memory: "1Gi" # Limits to 1 GiB of RAM
+              cpu: "64m" # Requests 500 millicores (~0.5 vCPU)
+              memory: "128Mi" # Requests 512 MiB of RAM
+#            limits:
+#              cpu: "1" # Limits to 1 vCPU
+#              memory: "1Gi" # Limits to 1 GiB of RAM
 #      imagePullSecrets:
 #        - name: dev-ecr-secret

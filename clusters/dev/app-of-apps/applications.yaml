@@ -7,7 +7,7 @@ metadata:
   namespace: argocd
 spec:
   goTemplate: true
-  goTemplateOptions: ["missingkey=error"]
+  goTemplateOptions: [ "missingkey=error" ]
   generators:
     - git:
         repoURL: 'git@github.com:deelaa-marketplace/ecommerce-k8s-gitops.git'
@@ -31,7 +31,6 @@ spec:
         app.kubernetes.io/part-of: '{{.values.namespace}}'
 
     spec:
-      project: ecommerce-app
       source:
         repoURL: 'git@github.com:deelaa-marketplace/ecommerce-k8s-gitops.git'
         targetRevision: 'HEAD'
