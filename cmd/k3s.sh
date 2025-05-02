@@ -440,7 +440,13 @@ install_k3s() {
     install_cmd+="INSTALL_K3S_VERSION=$K3S_VERSION "
     install_cmd+="K3S_CLUSTER_NAME=$CLUSTER_NAME "
     install_cmd+="K3S_NODE_IP=$NODE_IP "
-    install_cmd+="sh -s - --write-kubeconfig-mode 644"
+    #install_cmd+="K3S_EXTERNAL_IP=$EXTERNAL_IP "
+    #install_cmd+="K3S_KUBECONFIG_MODE=644 "
+    #install_cmd+="K3S_KUBECONFIG_OUTPUT='json' "
+    #install_cmd+="K3S_KUBECONFIG_ADMIN_MODE=true "
+
+    install_cmd+="sh -s - --disable traefik --write-kubeconfig-mode 644 "
+    #--node-external-ip $EXTERNAL_IP
 #    install_cmd+="sh -s - --disable traefik --write-kubeconfig-mode 644"
     #install_cmd+=" --kubelet-arg 'node-ip=$NODE_IP'"
 
