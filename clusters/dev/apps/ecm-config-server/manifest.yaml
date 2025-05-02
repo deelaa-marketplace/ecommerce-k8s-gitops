@@ -55,7 +55,7 @@ spec:
           readinessProbe:
             httpGet:
               port: 80
-              path: /health
+              path: /
           # The containerPort is set to the value of APP_PORT from the ConfigMap
           # This allows the container to listen on the specified port
           envFrom:
