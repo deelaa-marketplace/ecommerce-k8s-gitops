@@ -17,9 +17,6 @@ spec:
             values:
               env: 'dev'
               namespace: 'ecommerce-dev'
-          - path: 'clusters/argocd/*'
-            exclude: true
-
   template:
     metadata:
       name: '{{.path.basename}}-{{.values.env}}'
