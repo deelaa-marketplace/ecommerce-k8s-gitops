@@ -9,7 +9,7 @@ stringData:
   project: "ecommerce-app"
   name: "ecommerce-app-repo"
   type: "git"
-  url: "git@github.com/deelaa-marketplace/ecommerce-k8s-gitops.git"
+  url: "git@github.com:deelaa-marketplace/ecommerce-k8s-gitops.git"
 data:
   sshPrivateKey: |
     ${SSH_PRIVATE_KEY_B64}

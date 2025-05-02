@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
 spec:
   sourceRepos:
-    - "git@github.com/deelaa-marketplace/ecommerce-k8s-gitops.git"
+    - "git@github.com:deelaa-marketplace/ecommerce-k8s-gitops.git"
     - "https://github.com/deelaa-marketplace/ecommerce-k8s-gitops.git"
   destinations:
     - namespace: "ecommerce-dev"
