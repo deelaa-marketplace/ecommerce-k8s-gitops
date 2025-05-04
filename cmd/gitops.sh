@@ -137,5 +137,12 @@ main "$@"
 
 #sudo bash k3s.sh uninstall -v -f
 #sudo bash k3s.sh install -v -f
-#sudo bash manifest.sh install -n ecommerce-dev -k ~/.ssh/id_ed25519  -v -f
-#sudo bash manifest.sh install -n argocd -k ~/.ssh/id_ed25519  -v -f
+#sudo bash manifest.sh install -n ecommerce-dev -k ~/.ssh/id_ed25519 -r eu-west-1 -v -f
+#sudo bash manifest.sh install -n argocd -k ~/.ssh/id_ed25519  -r eu-west-1 -v -f
+
+#ssh-keygen -t ed25519 -C "seun.ogunjimi@gmail.com"
+#aws config set aws_access_key_id <your-access-key-id>
+#aws configure
+
+
+#kubectl scale deployment ecm-config-server-deployment --replicas=0 -n ecommerce-dev

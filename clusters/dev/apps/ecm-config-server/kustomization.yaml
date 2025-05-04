@@ -18,10 +18,10 @@ commonAnnotations:
   kustomize.interpolated.resource: "true"
   app.kubernetes.io/managed-by: kustomize
 
-#images:
-#  - name: ecm-config-server
-#    newName: 886129832542.dkr.ecr.eu-west-1.amazonaws.com/ecm-config-server
-#    newTag: v1.0.0
+images:
+  - name: ecm-config-server
+    newName: 886129832542.dkr.ecr.eu-west-1.amazonaws.com/ecm-config-server
+    newTag: v1.0.0
 
 configMapGenerator:
   - name: app-config

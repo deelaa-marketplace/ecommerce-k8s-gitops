@@ -48,7 +48,7 @@ spec:
         env: "dev"
     spec:
       containers:
-        - name: ecm-config-server-nginx
+        - name: ecm-config-server
           image: nginx:latest
           imagePullPolicy: Always
           ports:
@@ -62,6 +62,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: "ecm-config-server"
+            - secretRef:
+                name: "ecm-config-server-dev-parameter-store-secret"
           resources:
             requests:
               cpu: "64m" # Requests 500 millicores (~0.5 vCPU)

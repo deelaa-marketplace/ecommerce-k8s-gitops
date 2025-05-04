@@ -14,9 +14,6 @@ spec:
         revision: HEAD
         directories:
           - path: 'clusters/dev/apps/*'
-            values:
-              env: 'dev'
-              namespace: 'ecommerce-dev'
         values:
           env: 'dev'
           namespace: 'ecommerce-dev'
@@ -45,3 +42,4 @@ spec:
           selfHeal: true
         syncOptions:
           - CreateNamespace=true
+          - ApplyOutOfSyncOnly=true
