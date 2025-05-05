@@ -11,7 +11,7 @@ spec:
   target:
     name: "ecm-config-server-dev-parameter-store-secret"
   data:
-    - secretKey: "GITHUB_TOKEN"
+    - secretKey: "GITHUB_KEY"
       remoteRef:
         key: "/default/ecm-config-server/github-key"
 
@@ -66,8 +66,8 @@ spec:
                 name: "ecm-config-server-dev-parameter-store-secret"
           resources:
             requests:
-              cpu: "64m" # Requests 500 millicores (~0.5 vCPU)
-              memory: "128Mi" # Requests 512 MiB of RAM
+              cpu: "128m" # Requests 500 millicores (~0.5 vCPU)
+              memory: "256Mi" # Requests 512 MiB of RAM
 #            limits:
 #              cpu: "1" # Limits to 1 vCPU
 #              memory: "1Gi" # Limits to 1 GiB of RAM
